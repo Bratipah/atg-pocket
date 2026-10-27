@@ -1,0 +1,31 @@
+{
+  "name": "atg-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first treasury oversight desktop foundation",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:electron": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "start": "env -u ELECTRON_RUN_AS_NODE electron ."
+  },
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "4.4.1",
+    "electron": "45.1.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.5"
+  },
+  "main": "dist/electron/main.js",
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

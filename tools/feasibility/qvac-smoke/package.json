@@ -1,0 +1,16 @@
+{
+  "name": "atg-pocket-qvac-feasibility-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs",
+    "electron-smoke": "electron electron-main.cjs"
+  },
+  "dependencies": {
+    "@qvac/sdk": "0.22.0"
+  },
+  "devDependencies": {
+    "electron": "45.1.0"
+  }
+}

@@ -1,0 +1,125 @@
+# Milestone 0 — Feasibility
+
+**Reviewed:** 2026-10-28 (Africa/Nairobi)  
+**Scope:** Discovery and feasibility only. The focused addendum below adds isolated smoke-test workspaces and records measured results; no application has been built and Milestone 1 has not started.
+
+## Repository and environment (initial M0 snapshot; see addendum for updated probe)
+
+- The supplied working directory is empty (only `.` and `..`), has no `.git` directory, and contains no project documentation, source, lockfile, or tests. `git status` and `git log` therefore cannot run. No nearby AgentSafe/ATG code was found within the inspected parent directory.
+- Host: Ubuntu 26.04 LTS, x86_64; AMD Athlon Gold 3150U (2 cores / 4 threads) with integrated Radeon Vega graphics; 20 GiB RAM, 8 GiB swap, and 159 GiB free disk at inspection.
+- Node.js v24.22.0, npm 12.2.0, Git 2.53.0, and Google Chrome are present. No Android/iOS device, simulator, or test-device inventory was supplied.
+- The Vulkan loader and AMD Radeon Vulkan ICD libraries are present; `libatomic.so.1` is present. `vulkaninfo` is not installed, so Vulkan version/device capability is **not verified**. QVAC documents Vulkan >=1.4 for Linux GPU inference and CPU fallback when unavailable. The available driver, QVAC worker startup, memory fit, and actual inference have not been tested.
+
+## QVAC findings (initial M0 snapshot; see addendum for tested model and timings)
+
+- The official JS/TS docs currently identify `@qvac/sdk` v0.22 as current and document Node.js >=22.17, npm >=10.9; SDK operations run in a Bare worker over `bare-rpc`. The present Node/npm versions meet those documented requirements. Mobile support uses Expo/BareKit and requires a physical device; QVAC currently does not run in emulators due to `llamacpp` limitations.
+- Linux is an officially supported host (Ubuntu 22+, x64/arm64). Current QVAC system requirements list >=2 GiB total RAM, >=2 GiB free RAM at load, >=5 GiB free disk, and Vulkan >=1.4 for GPU inference; most LLMs fail below 4 GiB total RAM. This host exceeds the RAM/disk minimum on the observed snapshot, but the laptop-class CPU and unverified Vulkan capability leave performance and GPU acceleration unknown.
+- The official JS/TS quickstart demonstrates real `loadModel`, `completion`, `unloadModel` calls with the catalog constant `LLAMA_3_2_1B_INST_Q4_0`. This is a suitable *candidate* for an initial text-only proof, not yet a final model choice. SDK v0.22.0 is available from npm and declares Apache-2.0 for the SDK itself. Model weights have a separate license: the referenced Llama 3.2 family uses Meta's Llama 3.2 Community License (not an OSI license). The precise catalog artifact's metadata, weight size, redistribution obligations, language quality for the Kenyan use case, and fit on this host must be checked before bundling or selecting it.
+- QVAC docs explicitly describe offline preparation: download/cache the catalog asset while connected; later `loadModel` can validate the cached asset and load it offline, provided the same cache directory is used. The download requires registry access. An offline inference demonstration is therefore technically supported by the documented model lifecycle, but has not yet been performed.
+- Runtime decision: a browser-only PWA is not the initial choice. QVAC's JS/TS SDK uses a Bare worker and native inference dependencies; official QVAC guidance documents Node.js and Expo/Bare runtimes and has a dedicated Electron tutorial. A small Electron desktop shell is the simplest candidate for a local React UI plus QVAC and WDK in a Node-capable main process. This is a proposed architecture, not a proven build. Electron's Linux QVAC tutorial flags `--no-sandbox` as required; that has security implications and is an unresolved risk. Validate a supported sandboxed configuration or reconsider a native/mobile runtime before relying on Electron for a financial app.
+
+## WDK findings
+
+- Official WDK docs describe modular, self-custodial wallet components. Node.js and Bare are documented runtimes. The standard EVM wallet explicitly supports Sepolia and ERC-20 balance queries/transfers, offline transaction signing, broadcast, and normalized transaction status/finality APIs.
+- Current npm registry versions observed on 2026-10-28: `@tetherto/wdk` **1.0.0-beta.22** and `@tetherto/wdk-wallet-evm` **1.0.0-beta.24**. The current WDK documentation is version-skewed: its EVM page states beta.20 while npm's `latest` is beta.24. I inspected the beta.22 and beta.24 published TypeScript declarations from npm tarballs (without installing them into this workspace); they expose the WDK wallet registration/account lifecycle, EVM `transfer`, `sendTransaction`, `signTransaction`, token balance methods, and account disposal. Integration must be pinned and rechecked against those exact package versions during its authorized milestone.
+- Official EVM configuration shows the Sepolia RPC example `https://sepolia.drpc.org`; WDK Quickstart points to Pimlico and Candide sources for mock/test Sepolia USD₮. This supports an initial Sepolia test-asset path, but does not establish a canonical Tether-issued test USDT contract or guarantee faucet availability. The chosen faucet, token address/decimals, faucet eligibility, RPC availability/rate limits, test wallet funding, and independent explorer verification remain to be confirmed at integration time.
+- The EVM wallet's provider and transfer APIs require live network access for current balances, fee estimates, signing/broadcast workflow, and receipt/status checks. WDK must live outside the renderer; never expose seed material over renderer state, logs, local persistence, or IPC beyond the narrowest request/response. Generate a dedicated demo wallet locally; do not request or import a production seed phrase.
+
+## Initial feasibility conclusion (superseded by addendum below)
+
+The empty workspace, compatible Node/npm, and documented QVAC Node/Electron and WDK Node flows make a local desktop prototype feasible. **End-to-end feasibility is conditional**: no QVAC inference was run, Vulkan 1.4 is unverified, package APIs have not been exercised, target device is unspecified, and no live Sepolia funding/transfer was attempted. Do not represent either integration as working until the actual milestone-level tests pass.
+
+### Dependency and risk register
+
+| Risk / dependency | Evidence and impact | Mitigation / gate |
+|---|---|---|
+| Vulkan >=1.4 and AMD driver support | `vulkaninfo` absent; QVAC requires Vulkan >=1.4 for Linux GPU inference. CPU fallback is documented but speed is unknown. | Install/use `vulkaninfo` and run `qvac doctor`; record backend and perform timed actual inference on the intended device. Keep a very small context and model candidate. |
+| Host CPU latency / memory pressure | 2-core Athlon and integrated graphics; RAM availability was 9 GiB at inspection, can change. | Test inference under realistic app load before selecting final model; report cold load and response timings. |
+| Model license, artifact metadata and fit | Candidate family has Meta Llama license; catalog artifact metadata not yet captured. | Verify exact SDK catalog metadata, checksum, weight license, attribution/redistribution terms and download size before shipping weights. Consider another QVAC catalog model if terms or fit are unsuitable. |
+| Electron sandbox concern | QVAC Electron tutorial mentions `--no-sandbox` on Linux. | Prove a secure deployment configuration; do not casually disable Electron sandboxing in a financial application. Reassess runtime if the supported QVAC integration requires this flag. |
+| WDK documentation/version skew | Current npm latest beta.22/beta.24 differs from docs' beta.20. | Pin versions and record typings/source for the pinned versions; verify behavior with a funded Sepolia demo wallet before relying on docs. |
+| Test USD₮ faucet and token identity | WDK Quickstart links mock/test USD₮ faucets but no canonical faucet guarantee or contract was confirmed. | Select one faucet, independently establish chain ID, token contract and decimals, obtain test ETH for gas if needed, then verify transfer on an explorer. Keep the UI explicit that this is testnet/mock USD₮. |
+| Test target/device missing | Only the current Ubuntu laptop is discoverable; no phone or other judging device specified. | User must identify intended demo device(s); repeat QVAC proof on that device. |
+| Hackathon deadline unknown | No deadline or remaining build window was available in the supplied workspace. | Confirm deadline to schedule milestones and decide whether an end-to-end testnet run is realistically achievable. |
+
+## Required decisions / inputs
+
+1. Confirm the intended demonstration device and operating system (use this Ubuntu laptop, or specify a separate Android/iOS/desktop device).
+2. Provide the AI Yako submission/demo deadline.
+3. Confirm acceptance of a local Electron desktop candidate pending the sandbox feasibility gate; if the demo must be mobile/web, specify that constraint now.
+
+These are planning inputs. Their absence does not prevent the proposed architecture from being tested on the available laptop, but it prevents claiming target-device feasibility or a deadline-calibrated implementation plan.
+
+## Sources checked
+
+- QVAC [JS/TS SDK](https://docs.qvac.tether.io/sdk/js-ts-sdk/), [system requirements](https://docs.qvac.tether.io/sdk/system-requirements/), [download lifecycle and offline preparation](https://docs.qvac.tether.io/sdk/models/download-lifecycle/), [Electron tutorial](https://docs.qvac.tether.io/resources/tutorials/electron/), [SDK repository/release notes](https://github.com/tetherto/qvac/releases).
+- WDK [Node.js/Bare quickstart](https://docs.wdk.tether.io/start-building/nodejs-bare-quickstart/), [wallet module overview](https://docs.wdk.tether.io/sdk/wallet-modules/), [standard EVM wallet](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/), [EVM configuration](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/configuration/), and [EVM API reference](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/api-reference/).
+- npm registry metadata for `@qvac/sdk@0.22.0`, `@tetherto/wdk@1.0.0-beta.22`, and `@tetherto/wdk-wallet-evm@1.0.0-beta.24`; published WDK declaration files were inspected from temporary npm tarballs. No application package was installed.
+- [Meta Llama 3.2 license](https://www.llama.com/llama3_2/license/).
+
+## Focused Milestone 0 feasibility addendum (2026-10-28)
+
+The user confirmed Electron as the preferred candidate, the target as this Ubuntu desktop and the deadline as **30 October 2026, 17:00 EAT**. This addendum supersedes earlier “not tested yet” statements above where the same check is now recorded below. Existing discovery remains intact.
+
+### QVAC, host and model
+
+- Current official QVAC docs identify SDK v0.22.0. The official diagnostic is `qvac doctor` (`qvac doctor --json` for machine-readable output; `--quiet` for exit status only). CLI setup is `npm install -g @qvac/cli`, or without a global install `npx --package "@qvac/cli" qvac doctor --json`. SDK setup is `npm i @qvac/sdk`; the JS/TS quickstart runs `QVAC_CONFIG_PATH=./qvac.config.json node quickstart.js`. Linux requires Ubuntu 22+, Vulkan >=1.4 for GPU inference, `libatomic.so.1`, and g++ >=13 on Ubuntu 22. Node >=22.17/npm >=10.9 are required; current `qvac bundle` needs Node ^22.21 or >=24.9. This host has Node 24.22.0, npm 12.2.0, g++ 15.2, `libatomic1` 16-20260322-1ubuntu1, and `libvulkan1` 1.4.341.0-1.
+- The user approved installing `vulkan-tools`. The interactive `sudo apt-get update` requested local authentication and was stopped; no system package was installed. The exact Ubuntu package is `vulkan-tools`. To avoid leaving Vulkan unknown, its 1.4.341.0+dfsg1-1 package was downloaded and unpacked under `/tmp` without sudo, then that binary ran successfully. It reported Vulkan instance 1.4.341 and GPU0 AMD Radeon Vega 3 Graphics (RADV RAVEN2), API 1.4.335, Mesa 26.0.8-1ubuntu0.3. `mesa-vulkan-drivers` and loader are already installed. User session has `/dev/dri` access by ACL. The software llvmpipe device was also present; QVAC fit selected the AMD GPU. No need to install extra driver packages was found. `qvac doctor` itself was attempted through `npm exec`, but canceled before execution because it began resolving a second large QVAC package tree; therefore no `doctor` result is claimed.
+- Smallest suitable text-generation model found in the installed QVAC SDK catalog: `QWEN3_600M_INST_Q4`, a 600M-parameter Qwen3 Q4_0 GGUF (382,156,480 bytes). Other small catalog entries were for non-chat capabilities; this was the smallest chat/completion entry selected for this use case, not a claim that it is the smallest model of every modality. Its catalog entry pins `unsloth/Qwen3-0.6B-GGUF`, revision `50968a4468ef4233ed78cd7c3de230dd1d61a56b`, file `Qwen3-0.6B-Q4_0.gguf`, SHA-256 `33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb`, and QVAC blob key `4035e66388340ff7c1f291e7c0101855f5d0b2c7085f3ff62213573a2cd5dd17`. Hugging Face identifies the pinned model repository/revision as Apache-2.0. This is a different, smaller model than the initial Llama candidate; use and redistribute the exact file subject to verifying the artifact’s license notice and attribution in the submission package.
+- Isolated dependencies documented/installed for the feasibility harness only: `@qvac/sdk@0.22.0`, `electron@45.1.0`, `@tetherto/wdk@1.0.0-beta.22`, and `@tetherto/wdk-wallet-evm@1.0.0-beta.24`. SDK install brought 209 packages and a roughly 3.2 GB `node_modules`; Electron added 12 packages and downloaded its ~234 MB runtime. No workspace/root application dependencies were installed. `npm audit` on the QVAC harness reports three high findings stemming from pinned transitive `zod@4.6.5` (GHSA-mrhx-c7xc-m3w5); no forced upgrade/downgrade was applied. Resolve/reassess before shipping.
+- The SDK `assessModelFit` result was `likely-fits`, native fit, basis system memory: total 22.416 GB, used 12.385 GB, available 10.031 GB, reserved 2.006 GB, remaining budget 8.025 GB; it selected GPU and 29 GPU layers at context 1024. This is a point-in-time estimate, not a guarantee under other workloads.
+- Actual online local inference succeeded after downloading and checksum-validating the artifact. Download was interrupted once at 72% by an intentionally canceled noisy progress run, then resumed from cache; the resumed remainder took 19.299 s. Do not interpret that remainder as a fresh full-download time. Model load took 4.882 s, first token 1.270 s, and inference 8.007 s. The response was generated by QVAC but included `<think>` content and extra words rather than following the exact-output prompt.
+- Actual offline inference then succeeded in an unprivileged user+network namespace (`unshare --user --map-root-user --net`) after preparation was complete. This isolated only the test process; it did not take the host offline. The cached model checksum validated and loaded on the AMD GPU. Load took 8.411 s; first token 479 ms; inference 12.911 s; observed QVAC process-tree peak RSS 523,911,168 bytes; lowest host available memory during run 9,822,130,176 bytes. It generated an answer but again added `<think>` and did not follow exact-output instructions. Offline cache reuse is therefore demonstrated; product-wide offline behavior is not yet implemented.
+- Electron hosting was verified with the same local model in Electron 45.1.0 `utilityProcess` (isolated child process), using an allowlisted environment and no `--no-sandbox` switch. Real inference completed; cached load 7.902 s and inference 7.068 s. One non-fatal GTK schema warning appeared. This establishes that a QVAC worker can run in a local Electron utility process in this environment; it does not runtime-verify a renderer/window configuration or package build. Prefer utility process over hosting inference in Electron main, so model/runtime work cannot block privileged orchestration.
+
+### WDK and Sepolia
+
+- Current official WDK EVM pages describe `@tetherto/wdk-wallet-evm@1.0.0-beta.20`; npm `latest` metadata on 2026-10-28 showed wallet beta.24 and WDK beta.22. Installed package declaration files were used to verify the exact installed interfaces: register a `WalletManagerEvm`, retrieve an account, query native/token balance, use `transfer({token, recipient, amount})` with base units, inspect `{hash, fee}`, wait for a transaction, and dispose. This resolves the API choice for the harness while preserving the documentation/package-version skew as a version pinning risk.
+- Sepolia is the selected supported EVM test network (chain ID 11155111). The documented dRPC example returned RPC error code 35 (“chain is not available on free plan”). `https://ethereum-sepolia-rpc.publicnode.com` returned `0xaa36a7` for `eth_chainId`. An installed-package smoke initialized WDK with this RPC, derived an ephemeral random test account without printing/persisting its seed or displaying its address, and successfully read native balance `0`. This verifies package setup and RPC read only.
+- A real testnet transfer was not performed. Prerequisites still missing: a dedicated demo-only wallet with securely controlled seed, Sepolia ETH for gas, chosen test/mock ERC-20 contract and decimals, obtainable test tokens, confirmed RPC reliability/rate limits, an explicit transfer recipient and user confirmation, and explorer/receipt verification. WDK’s Quickstart points at test-token faucet sources but does not guarantee faucet access or establish a canonical Tether-issued test USD₮. No mainnet funds were used; no private key or seed was requested, exposed, logged, or persisted.
+
+### Electron boundary and offline/security proposal
+
+- A QVAC-specific Electron tutorial exists and its sample calls `app.commandLine.appendSwitch('no-sandbox')`. Its sample also uses less restrictive settings than this product requires. Our successful UtilityProcess proof did not need that switch, so retain the preferred Electron architecture but do not adopt the tutorial wholesale. Electron’s utility processes and renderers are sandboxable; the utility-process path is a candidate to package and recheck on the target build.
+- Required `BrowserWindow` settings: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`; load only bundled `app://atg/` content. Use restrictive CSP such as `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Deny all unexpected navigation/new windows, disable `<webview>`, and validate every IPC sender’s exact app origin, expected `webContents`, and main-frame status. No raw `ipcRenderer`, arbitrary file paths, shell commands, signing payloads, or unrestricted IPC in renderer.
+- Typed, allowlisted renderer API proposal: `getRuntimeStatus(): Promise<RuntimeStatus>`; `askTreasuryCopilot({question, proposalId?}): Promise<{answer, inferenceId}>`; `createPaymentProposal({supplierId, amountMinor, currency:'KES'}): Promise<ProposalSummary>`; `evaluateProposal({proposalId}): Promise<PolicyDecision>`; `executeApprovedProposal({proposalId, approvalChallenge}): Promise<TransactionState>`; and a typed status subscription returning an unsubscribe function. Apply runtime schema, length/range, proposal-state and authorization checks in privileged services as well as TypeScript types. AI has no signing/broadcast tool.
+- Keep QVAC in a sandboxed utility process with a narrow validated message protocol. Keep WDK in a privileged wallet service/process; expose only application-level proposal/execute-approved actions after fresh network/balance/policy checks and an explicit user gesture. For a test wallet, keep secrets in a dedicated privileged process’s memory or a reviewed OS keyring integration; choose and verify the actual store before wallet onboarding. Never persist seeds in business records, renderer state, logs, IPC responses, or source. Offline inference has been tested by completing model download/checksum validation online, then running the process in a network namespace with no external interfaces. In the app, verify inference still works in offline mode and ensure payment execution fails closed without connectivity.
+- Limitation: no app renderer exists, so CSP, IPC sender validation, navigation controls and wallet-secret storage are architecture requirements, not tested security claims.
+
+### Decision
+
+**Conditional GO for a narrowly scoped desktop demonstration; NO-GO for claiming the full treasury-transfer workflow is proven.**
+
+Passed checks:
+
+- Current host satisfies QVAC Node/npm/compiler/atomic-library requirements; Vulkan 1.4 and AMD RADV GPU were observed, and QVAC selected the GPU.
+- Pinned Qwen3 600M artifact size, revision, checksum and Apache-2.0 license metadata were verified.
+- Real QVAC local inference succeeded online, offline with external networking isolated for the process, and inside Electron 45.1.0 utilityProcess without `--no-sandbox`.
+- Installed WDK types and wallet initialization were verified against a real Sepolia chain ID and native-balance RPC read.
+
+Failed or incomplete checks:
+
+- `qvac doctor` did not execute: its CLI invocation was canceled during resolution before the diagnostic ran.
+- Global `vulkan-tools` installation did not complete because sudo required local interactive authentication. The exact package was unpacked under `/tmp`, allowing the Vulkan diagnostic to run successfully without a system install.
+- The model did not follow the exact-output prompt and emitted `<think>` content. This is a quality limitation, not an inference failure.
+- No live testnet transfer occurred. Renderer CSP/IPC/navigation protections and wallet-secret handling have not been implemented or runtime-verified.
+
+Unresolved risks:
+
+- Offline inference took 12.9 seconds; latency and memory under the full application load remain unknown.
+- The harness dependency audit reported three high findings from transitive `zod@4.6.5`; WDK docs and npm package versions are skewed.
+- Test wallet funding, identified test token and faucet availability, RPC reliability, and explorer receipt evidence remain open.
+- The OS keyring choice and packaged Electron security configuration require implementation and verification.
+
+At the time of review, about 63 hours remained until the deadline. Smallest viable scope: a single hardened Electron window, synthetic local treasury records, deterministic KES budget rules, local proposal creation/rejection, a local audit trail, and QVAC-generated contextual explanation labeled as untrusted/advisory. Demonstrate offline inference live. Include no payment broadcast unless a dedicated test wallet is funded, its test token contract is identified, a user explicitly authorizes the transfer, and the Sepolia receipt is independently verified. If a real transfer is required by the submission, the end-to-end submission remains NO-GO until that gate passes.
+
+### Addendum sources
+
+- QVAC [system requirements / `qvac doctor` / Linux setup](https://docs.qvac.tether.io/sdk/system-requirements/), [JS/TS setup and quickstart](https://docs.qvac.tether.io/sdk/js-ts-sdk/), [CLI](https://docs.qvac.tether.io/cli/), [Electron tutorial](https://docs.qvac.tether.io/resources/tutorials/electron/), [Electron utility process](https://www.electronjs.org/docs/latest/api/utility-process).
+- Model: [pinned Qwen3 GGUF revision and license](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/tree/50968a4468ef4233ed78cd7c3de230dd1d61a56b).
+- WDK [Standard EVM](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/), [API reference](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/api-reference/), and [Node.js Quickstart](https://docs.wdk.tether.io/start-building/nodejs-bare-quickstart/); exact declarations came from the installed package versions listed above.
+- Electron [security recommendations](https://www.electronjs.org/docs/latest/tutorial/security/), [process sandboxing](https://www.electronjs.org/docs/latest/tutorial/sandbox), and [context isolation](https://www.electronjs.org/docs/latest/tutorial/context-isolation/).
+
+### Reproducibility artifacts
+
+The isolated harnesses and lockfiles are under [`tools/feasibility/qvac-smoke`](../../tools/feasibility/qvac-smoke/) and [`tools/feasibility/wdk-smoke`](../../tools/feasibility/wdk-smoke/). The QVAC directory also contains the Electron utility-process harness. The model cache and installed dependencies are ignored by each harness; no production application source was created.
