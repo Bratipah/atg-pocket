@@ -9,9 +9,11 @@
     "dev:electron": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
     "build": "tsc -p tsconfig.electron.json && vite build",
     "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "start": "env -u ELECTRON_RUN_AS_NODE electron ."
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@qvac/sdk": "0.22.0",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -27,5 +29,8 @@
   "main": "dist/electron/main.js",
   "allowScripts": {
     "esbuild@0.25.12": true
+  },
+  "overrides": {
+    "zod": "4.6.6"
   }
 }

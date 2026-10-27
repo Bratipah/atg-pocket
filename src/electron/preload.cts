@@ -3,6 +3,9 @@ import type { AtgApi } from './api.js';
 
 const api: AtgApi = {
   getShellStatus: () => ipcRenderer.invoke('shell:get-status'),
+  getAiStatus: () => ipcRenderer.invoke('ai:get-status'),
+  initializeAi: () => ipcRenderer.invoke('ai:initialize'),
+  explainTreasury: (input) => ipcRenderer.invoke('ai:explain-treasury', input),
 };
 
 contextBridge.exposeInMainWorld('atg', api);

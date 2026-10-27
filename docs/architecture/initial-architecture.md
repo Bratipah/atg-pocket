@@ -1,6 +1,6 @@
 # ATG Pocket — Initial Architecture Proposal
 
-**Milestone:** 0 (proposal only; requires user approval before implementation)  
+**Milestone:** 0 architecture proposal, updated with Milestones 1 and 2 implementation findings
 **Decision date:** 2026-10-28
 
 ## Proposed minimum viable shape
@@ -29,7 +29,7 @@ Electron main process (sender validation + typed service routing)
 - `domain/money`: integer minor units / explicit token base units; no binary floats for authoritative calculations.
 - `domain/treasury`: budgets, expenses, suppliers, policies and proposal state transitions. No UI, QVAC, or WDK imports.
 - `policy`: deterministic, versioned decision with machine-readable reasons. A policy pass is not wallet authorization or network verification.
-- `services/ai`: `LocalAIService` contract and production QVAC adapter. The model parses intent and explains validated context; app code performs calculations and enforces policy. Runtime-schema validation is mandatory.
+- `src/electron/qvac-worker.ts`: QVAC adapter in Electron `utilityProcess`, with a typed initialization/explanation protocol, one active operation, constrained prompt, bounded text output, and a model cached in Electron user data. QVAC does not access treasury policy or wallets.
 - `services/wallet`: narrow `WalletService` using verified WDK EVM methods. Separate online verification, user confirmation, signing, broadcast and receipt confirmation. No automatic execution from model output or policy result.
 - `services/persistence`: local, schema-versioned repository. Candidate is SQLite via Electron main process for one desktop host; IndexedDB is an alternative if platform/packaging favors it. Select only after a short persistence feasibility check in Milestone 1. Treat records as untrusted; do not claim encryption at rest.
 - `services/audit`: append-only application-level events, explicitly not cryptographically tamper-proof.
@@ -38,8 +38,8 @@ Electron main process (sender validation + typed service routing)
 
 | Concern | Proposal | Verification still required |
 |---|---|---|
-| QVAC package | Feasibility harness uses `@qvac/sdk@0.22.0` | Online/offline inference and Electron utility-process inference passed; product adapter, output policy, packaging and app-level sandbox/security checks remain |
-| Initial model candidate | QVAC catalog `QWEN3_600M_INST_Q4` (382 MB, Apache-2.0 pinned artifact) | Checksum and license metadata verified; inference works but exact-output instruction following was weak; evaluate answer quality before relying on it |
+| QVAC package | Application pins `@qvac/sdk@0.22.0` | Product adapter, constrained output handling, offline UI, and renderer checks are implemented and verified; packaged installer behavior remains untested |
+| Model | QVAC catalog `QWEN3_600M_INST_Q4` (382 MB, Apache-2.0 pinned artifact) | Checksum, revision, and license verified; inference works but answer quality and arithmetic reliability are weak |
 | Wallet packages | Feasibility harness uses `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24` | Typings, initialization and Sepolia RPC read passed; real Sepolia transfer, token address/faucet and independently verified receipt remain untested |
 | First test network | Ethereum Sepolia | Confirm RPC reliability and demo-specific test ETH / mock USD₮ source |
 | Reporting currency | KES, stored as integer cents | Do not convert KES to token without a live, sourced, fresh rate and explicit user review; conversion may be deferred in the MVP |
@@ -52,14 +52,14 @@ Expose one method per allowed operation through preload/contextBridge; never exp
 
 ```ts
 interface AtgApi {
-  getRuntimeStatus(): Promise<RuntimeStatus>
-  askTreasuryCopilot(input: { question: string; proposalId?: string }): Promise<{ answer: string; inferenceId: string }>
-  createPaymentProposal(input: { supplierId: string; amountMinor: string; currency: 'KES' }): Promise<ProposalSummary>
-  evaluateProposal(input: { proposalId: string }): Promise<PolicyDecision>
-  executeApprovedProposal(input: { proposalId: string; approvalChallenge: string }): Promise<TransactionState>
-  onRuntimeStatus(listener: (status: RuntimeStatus) => void): () => void
+  getShellStatus(): Promise<ShellStatus>
+  getAiStatus(): Promise<AiStatus>
+  initializeAi(): Promise<AiStatus>
+  explainTreasury(input: { context: string }): Promise<{ answer: string; latencyMs: number }>
 }
 ```
+
+This is the current Milestone 2 surface. Proposal creation, policy evaluation, wallet actions, and transaction methods remain deferred and are not exposed.
 
 No renderer method accepts a filesystem path, command, raw transaction, arbitrary signer request, or generic IPC channel. QVAC has no wallet tools. `executeApprovedProposal` resolves only a stored proposal which has passed deterministic policy and fresh online checks, with an explicit confirmation bound to that proposal.
 
@@ -72,7 +72,16 @@ No renderer method accepts a filesystem path, command, raw transaction, arbitrar
 - Packaged Electron renderer security remains an architecture gate. QVAC utility-process inference worked without `--no-sandbox`; do not add that switch based on the upstream tutorial.
 - Create the renderer with `{ contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true }`; serve only bundled `app://atg/` content. Set a restrictive CSP (`default-src 'none'`, local scripts/styles/assets only, `connect-src 'none'`), deny navigation and new windows, disable `<webview>`, and validate every sender. Electron official security guidance specifically calls for these controls.
 - QVAC utility process uses a narrow, validated request/response protocol. WDK lives in a privileged wallet service. Use a dedicated test wallet and keep secret material only in that process’s memory or a reviewed OS keyring; do not select or claim a keyring until its implementation is verified. Never return secrets to renderer or logs.
-- Offline inference has been observed after online model setup by running QVAC in a process isolated from external networking. App-level offline QA must still show local inference works and that signing/broadcast fails closed while disconnected.
+- Cached inference has been observed in the actual Electron application with external networking disabled. No wallet, signing, or broadcast path exists in this milestone.
+
+## Milestone 2 implementation record (2026-10-28)
+
+- The renderer keeps context isolation, disabled Node integration, sandbox, web security, restrictive CSP, local-only protocol, denied navigation/new windows, and sender/main-frame/origin checks. Preload exposes only status, explicit model initialization, and one explanation request. No generic IPC, paths, shell, secrets, signing, or arbitrary model operations are exposed.
+- The model runs in `utilityProcess` and QVAC's Bare worker. The app pins `@qvac/sdk@0.22.0`, catalog model `QWEN3_600M_INST_Q4`, Qwen3 600M Q4_0. The preserved feasibility GGUF was checksum-verified as `33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb`, size 382,156,480 bytes. It corresponds to `unsloth/Qwen3-0.6B-GGUF` revision `50968a4468ef4233ed78cd7c3de230dd1d61a56b`, Apache-2.0. The application cache is under Electron user data, separate from the preserved smoke cache.
+- Main validates exact input shape and 8–1,600 character length, permits one explanation at a time, limits returned output to 1,800 characters, strips `<think>` blocks, and reports safe errors. The renderer displays model output as React text, never HTML. Generated content remains untrusted advisory text.
+- Measured on the target Ubuntu desktop: first application setup including model download and initialization, 116.3 s; cached initialization with external networking disabled, 9.0 s; online UI inference, 27.7 s; cached offline UI inference, 22.0 s. These are single-run measurements, not performance guarantees. Observed QVAC Bare-worker RSS was about 429 MiB during offline setup and 447 MiB during inference; total GPU/process-tree memory was not independently measured. First setup downloaded the 382 MB artifact and requires network access and disk space.
+- The app dependency tree overrides QVAC's exact transitive `zod@4.6.5` pin with patched `4.6.6`. Root `npm audit` reports zero vulnerabilities. The separate smoke workspace remains unchanged with three high findings; npm's suggested SDK downgrade to 0.21.1 is a semver-major change. The app override was exercised by real inference.
+- Actual desktop offline inference and missing-model failure were verified. Missing-model initialization returned a failure after the 180-second request timeout without crashing the app. The cache was restored and its pinned checksum rechecked. The failed worker is terminated to allow retry.
 
 ## Deliberately deferred
 

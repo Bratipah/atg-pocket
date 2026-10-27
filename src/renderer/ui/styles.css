@@ -727,6 +727,7 @@ button:focus-visible {
   padding-left:11px;
   padding-right:11px
 }
+
 .main-area {
   margin-left:185px
 }
@@ -766,3 +767,18 @@ button:focus-visible {
 }
 
 }
+
+.ai-panel { margin-top:16px; padding:20px; }
+.ai-advisory { margin:0 0 16px; color:#91b9ad; font-size:11px; line-height:1.6; }
+.ai-label { display:block; margin-bottom:7px; color:#9ba59f; font:10px var(--mono); }
+.ai-panel textarea { display:block; width:100%; min-height:92px; resize:vertical; padding:12px; border:1px solid #303a36; border-radius:6px; color:var(--text); background:#111615; font:12px/1.6 system-ui,sans-serif; }
+.ai-panel textarea:focus { outline:2px solid #73cbbb; outline-offset:1px; }
+.ai-actions { display:flex; align-items:center; gap:10px; margin-top:12px; }
+.ai-button { padding:9px 13px; border:1px solid #47766b; border-radius:5px; color:#101715; background:#73cbbb; font-size:11px; font-weight:650; cursor:pointer; }
+.ai-button.secondary { color:#b6c5be; background:#1a2420; }
+.ai-button:disabled { opacity:.5; cursor:wait; }
+.ai-latency { color:#89958f; font:10px var(--mono); }
+.ai-error { color:#f0a19a; font-size:11px; }
+.ai-response { margin-top:15px; padding:14px; border-left:2px solid #73cbbb; background:#131a18; white-space:pre-wrap; overflow-wrap:anywhere; }
+.ai-response strong { color:#99d7c7; font:10px var(--mono); text-transform:uppercase; letter-spacing:.06em; }
+.ai-response p { margin:9px 0 0; color:#d7dfda; font-size:12px; line-height:1.7; }

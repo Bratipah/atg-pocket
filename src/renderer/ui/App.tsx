@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ShellStatus } from '../../electron/api';
+import type { AiStatus, ExplanationResponse, ShellStatus } from '../../electron/api';
 
 const navigation = [
   { label: 'Overview', icon: '◫', active: true },
@@ -14,11 +14,31 @@ function Mark() {
 
 export function App() {
   const [status, setStatus] = useState<ShellStatus | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiStatus>({ state: 'not-initialized', message: 'Model not initialized' });
+  const [context, setContext] = useState('Synthetic example: a weekly procurement budget is KES 60,000, prior example spending is KES 24,000, and a proposed stock purchase is KES 8,000. Explain the context and arithmetic for review.');
+  const [explanation, setExplanation] = useState<ExplanationResponse | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!window.atg) return;
     void window.atg.getShellStatus().then(setStatus).catch(() => setStatus(null));
+    void window.atg.getAiStatus().then(setAiStatus).catch(() => setAiStatus({ state: 'failed', message: 'Local model status is unavailable.' }));
   }, []);
+
+  async function initializeAi() {
+    setBusy(true); setError(''); setAiStatus({ state: 'initializing', message: 'Loading or downloading model…' });
+    try { setAiStatus(await window.atg.initializeAi()); }
+    catch { setError('Model initialization failed. Retry while connected and check free disk space.'); setAiStatus({ state: 'failed', message: 'Model initialization failed' }); }
+    finally { setBusy(false); }
+  }
+
+  async function requestExplanation() {
+    setBusy(true); setError(''); setExplanation(null); setAiStatus({ state: 'processing', message: 'Generating explanation…' });
+    try { setExplanation(await window.atg.explainTreasury({ context })); setAiStatus(await window.atg.getAiStatus()); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Local inference failed.'); setAiStatus(await window.atg.getAiStatus().catch(() => ({ state: 'failed' as const, message: 'Local model status is unavailable.' }))); }
+    finally { setBusy(false); }
+  }
 
   return (
     <div className="app-shell">
@@ -57,7 +77,7 @@ export function App() {
           </section>
 
           <section className="status-strip" aria-label="Application capability status">
-            <div className="strip-item"><span className="strip-icon ai-icon">✳</span><div><span className="strip-label">LOCAL AI</span><strong>Not integrated</strong></div><span className="tag tag-neutral">MILESTONE 3</span></div>
+            <div className="strip-item"><span className="strip-icon ai-icon">✳</span><div><span className="strip-label">LOCAL AI</span><strong>{aiStatus.message}</strong></div><span className="tag tag-neutral">{aiStatus.state.toUpperCase()}</span></div>
             <div className="strip-separator" />
             <div className="strip-item"><span className="strip-icon shield-icon">◇</span><div><span className="strip-label">POLICY ENGINE</span><strong>Not configured</strong></div><span className="tag tag-neutral">MILESTONE 2</span></div>
             <div className="strip-separator" />
@@ -81,6 +101,20 @@ export function App() {
               <div className="panel-heading"><div><div className="section-kicker">03 <span /> REVIEW QUEUE</div><h2>Proposed actions</h2></div><span className="count-pill">0</span></div>
               <div className="empty-state actions-empty"><div className="empty-illustration actions-illustration"><div className="doc-shape"><i/><i/><i/></div><span className="plus-shape">+</span></div><div className="empty-title">Nothing to review</div><p>Proposals will appear here for your review. No payment actions are available in this foundation.</p><span className="soft-label">NO ACTIONS PROPOSED</span></div>
             </article>
+          </section>
+
+          <section className="panel ai-panel" aria-labelledby="ai-heading">
+            <div className="panel-heading"><div><div className="section-kicker">04 <span /> LOCAL MODEL</div><h2 id="ai-heading">Treasury explanation</h2></div><span className="tag tag-neutral">QWEN3 · ON DEVICE</span></div>
+            <p className="ai-advisory">AI-generated advisory explanation. It does not authorize payments, enforce limits, or make financial decisions. Example context only.</p>
+            <label className="ai-label" htmlFor="treasury-context">Context (up to 1,600 characters)</label>
+            <textarea id="treasury-context" maxLength={1600} value={context} onChange={(event) => setContext(event.target.value)} disabled={busy} />
+            <div className="ai-actions">
+              {aiStatus.state !== 'ready' && <button className="ai-button secondary" onClick={() => void initializeAi()} disabled={busy}>{aiStatus.state === 'initializing' ? 'Initializing…' : aiStatus.state === 'failed' ? 'Retry model setup' : 'Initialize local model'}</button>}
+              <button className="ai-button" onClick={() => void requestExplanation()} disabled={busy || aiStatus.state !== 'ready' || context.trim().length < 8}>{busy ? 'Working…' : 'Generate explanation'}</button>
+              {explanation && <span className="ai-latency">Generated in {(explanation.latencyMs / 1000).toFixed(1)}s</span>}
+            </div>
+            {error && <p className="ai-error" role="alert">{error}</p>}
+            {explanation && <div className="ai-response"><strong>AI-generated advisory explanation</strong><p>{explanation.answer}</p></div>}
           </section>
 
           <footer className="page-footer"><div><Mark /><span>LOCAL-FIRST BY DESIGN</span></div><div><span>Shell {status?.appVersion ?? '—'}</span><i /> <span>AI {status?.localAi ?? 'not integrated'}</span><i /> <span>Network {status?.network ?? 'not checked'}</span></div></footer>
