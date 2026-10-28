@@ -6,7 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC } from './api.js';
 import type { AiStatus, ExplanationResponse } from './api.js';
-import { validateExplanationInput, validateModelAnswer } from './validation.js';
+import { validateExplanationInput, validateModelAnswer, validateProposalInput } from './validation.js';
+import { DEMO_POLICY, DEMO_PRIOR_SPENDING, evaluatePolicy, parseMoney } from './treasury-domain.js';
+import type { EvaluateProposalResponse } from './api.js';
 import type { QvacCommand, QvacResponse } from './qvac-protocol.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -88,6 +90,18 @@ function registerIpc(): void {
       activeRequest = false;
       workerStatus = { state: 'ready', message: 'Local model ready' };
     }
+  });
+  ipcMain.handle(IPC.evaluateProposal, (event, rawInput): EvaluateProposalResponse => {
+    assertTrusted(event);
+    const request = validateProposalInput(rawInput);
+    const transaction = parseMoney(request.amount, request.currency);
+    return {
+      synthetic: true,
+      transaction,
+      policy: DEMO_POLICY,
+      priorSpending: DEMO_PRIOR_SPENDING,
+      result: evaluatePolicy({ transaction: { amount: transaction }, policy: DEMO_POLICY, priorSpending: DEMO_PRIOR_SPENDING }),
+    };
   });
 }
 

@@ -1,7 +1,15 @@
 import type { ExplanationRequest } from './api.js';
+import type { EvaluateProposalRequest } from './api.js';
 
 export const MAX_CONTEXT_LENGTH = 1600;
 export const MAX_ANSWER_LENGTH = 1800;
+
+export function validateProposalInput(value: unknown): EvaluateProposalRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Enter a proposed amount.');
+  const request = value as Record<string, unknown>;
+  if (Object.keys(request).length !== 2 || typeof request.amount !== 'string' || typeof request.currency !== 'string') throw new Error('Invalid proposal request.');
+  return { amount: request.amount, currency: request.currency };
+}
 
 export function validateExplanationInput(value: unknown): ExplanationRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Enter a treasury context.');

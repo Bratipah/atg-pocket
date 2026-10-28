@@ -1,6 +1,6 @@
 # ATG Pocket
 
-ATG Pocket is an offline-first treasury oversight concept for small businesses. This repository contains the **Milestone 1 desktop foundation and Milestone 2 local QVAC inference integration**. The dashboard's amounts and counts are synthetic examples; there are no connected wallets, financial records, treasury policy rules, or payment actions. Local AI provides advisory explanations only.
+ATG Pocket is an offline-first treasury oversight concept for small businesses. This repository contains the **Milestone 1 desktop foundation, Milestone 2 local QVAC inference, and Milestone 3 deterministic treasury policy demo**. All treasury values, policy limits, and prior spending shown by the demo are synthetic. Nothing is persisted; there are no connected wallets or payment actions. Local AI provides advisory explanations only and has no role in policy decisions.
 
 ## Requirements
 
@@ -28,10 +28,11 @@ npm start
 
 ## Structure
 
-- `src/electron/main.ts` — window lifecycle, local `app://atg` asset protocol, CSP, sender validation, allowlisted IPC, and QVAC utility-process lifecycle.
+- `src/electron/main.ts` — window lifecycle, local `app://atg` asset protocol, CSP, sender validation, allowlisted IPC, treasury evaluation entry point, and QVAC utility-process lifecycle.
+- `src/electron/treasury-domain.ts` — currency metadata, exact integer minor-unit parsing, policy validation, and pure fail-closed policy evaluation. It imports no QVAC or Electron code.
 - `src/electron/qvac-worker.ts` — isolated QVAC model initialization and constrained text completion.
 - `src/electron/preload.cts` — typed status, explicit model initialization, and treasury explanation methods; no Node, raw IPC, filesystem, shell, wallet, or arbitrary model APIs.
-- `src/renderer/` — React interface and local design system.
+- `src/renderer/` — React interface and local design system; policy input is sent to main and the renderer cannot submit a policy or decision.
 - `tools/feasibility/` — isolated, preserved QVAC and WDK smoke evidence; neither is imported by the application.
 
 ## Trust boundaries and planned integrations
@@ -41,6 +42,8 @@ The renderer is an untrusted presentation process with context isolation, sandbo
 Future QVAC inference belongs in the isolated Electron utility-process architecture already exercised by the QVAC feasibility harness, with a narrow validated request/response protocol. WDK and any secret handling must remain in a privileged service boundary; seed material, keys, signing methods, and raw transaction authority must never enter renderer state or preload. No secret storage or signing implementation has been selected or built. A later milestone must verify packaged behavior and the host's secure storage option before wallet onboarding.
 
 The renderer cannot reach the network. Its "Network not checked" status is intentional and does not claim that connectivity was detected. Cached model inference was tested with network access disabled. Demo treasury values and the sample treasury context are synthetic and are not wallet balances. AI-generated explanations are untrusted advisory text and do not authorize payments, enforce limits, change budgets, or make binding financial decisions.
+
+Milestone 3 adds a KES example policy (KES 20,000 per-transaction hard limit; KES 60,000 example-week cap; KES 10,000 approval threshold) and a visibly supplied synthetic prior-spending total of KES 24,000. KES is the reporting and policy currency for this scenario; this does not represent KES settlement or payment support. The user can select supported currency codes, but incompatible policy currencies fail closed; there is no currency conversion or exchange-rate assumption. Amounts use integer minor units and reject excess decimal precision without rounding. Prior spending is an explicit fixture, not transaction history. No treasury data is persisted.
 
 ## Dependency note
 

@@ -5,8 +5,8 @@ import { StringDecoder } from 'node:string_decoder';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const mode = process.argv[2] ?? 'offline-success';
-if (!['offline-success', 'offline-missing'].includes(mode)) {
-  throw new Error('Usage: node tools/verification/electron-qvac-check.mjs [offline-success|offline-missing]');
+if (!['offline-success', 'offline-missing', 'policy-demo'].includes(mode)) {
+  throw new Error('Usage: node tools/verification/electron-qvac-check.mjs [offline-success|offline-missing|policy-demo]');
 }
 
 const child = spawn(path.join(root, 'node_modules/electron/dist/electron'), ['.', '--remote-debugging-pipe'], {
@@ -76,8 +76,39 @@ try {
   while (Date.now() < pageDeadline && await evaluate('location.href', sessionId) !== 'app://atg/index.html') await pause(100);
   if (await evaluate('location.href', sessionId) !== 'app://atg/index.html') throw new Error('ATG renderer did not finish loading');
 
+  if (mode === 'policy-demo') {
+    const amount = (value) => evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(document.querySelector('#proposal-amount'), ${JSON.stringify(value)}); document.querySelector('#proposal-amount').dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.policy-demo .ai-button').click()`, sessionId);
+    const outcome = async (value, currency = 'KES') => {
+      await amount(value);
+      const deadline = Date.now() + 5_000;
+      const displayed = `${currency} ${Number(value).toFixed(currency === 'JPY' ? 0 : 2)}`;
+      let text = '';
+      while (Date.now() < deadline) {
+        await pause(50);
+        const resultText = await evaluate("document.querySelector('.policy-result')?.innerText || ''", sessionId);
+        if (resultText.includes(displayed)) { text = await evaluate("document.querySelector('.policy-result strong')?.textContent || ''", sessionId); break; }
+      }
+      return text;
+    };
+    const cases = [
+      ['8000', 'allow'], ['10000', 'require approval'], ['20000.01', 'deny'],
+    ];
+    for (const [value, expected] of cases) {
+      const actual = await outcome(value);
+      console.log('POLICY_CASE', value, actual);
+      if (actual !== expected) throw new Error(`Expected ${expected} for ${value}; received ${actual}`);
+    }
+    await evaluate("Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(document.querySelector('.policy-demo select'), 'USD'); document.querySelector('.policy-demo select').dispatchEvent(new Event('change', { bubbles: true }))", sessionId);
+    const currencyResult = await outcome('1', 'USD');
+    console.log('POLICY_CURRENCY_MISMATCH', currencyResult);
+    if (currencyResult !== 'deny') throw new Error('Expected incompatible currency to fail closed');
+    process.exitCode = 0;
+  }
+
+  if (mode !== 'policy-demo') {
   const starting = Date.now();
-  await evaluate("Array.from(document.querySelectorAll('button')).find((button) => /Initialize local model|Retry model setup/.test(button.textContent))?.click()", sessionId);
+  const initializeUi = await evaluate("(() => { const button = Array.from(document.querySelectorAll('button')).find((item) => /Initialize local model|Retry model setup/.test(item.textContent)); const labels = Array.from(document.querySelectorAll('button')).map((item) => item.textContent.trim()); button?.click(); return { button: button?.textContent.trim() || null, labels }; })()", sessionId);
+  console.log('INITIALIZE_UI', JSON.stringify(initializeUi));
   let state = '';
   const initializationLimitMs = mode === 'offline-missing' ? 210_000 : 60_000;
   const stateDeadline = Date.now() + initializationLimitMs;
@@ -105,6 +136,7 @@ try {
     if (!response.includes('AI-generated advisory explanation')) process.exitCode = 2;
   } else {
     process.exitCode = 2;
+  }
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Electron QVAC verification failed');

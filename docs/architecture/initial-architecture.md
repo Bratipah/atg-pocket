@@ -26,9 +26,8 @@ Electron main process (sender validation + typed service routing)
 
 ## Component boundaries
 
-- `domain/money`: integer minor units / explicit token base units; no binary floats for authoritative calculations.
-- `domain/treasury`: budgets, expenses, suppliers, policies and proposal state transitions. No UI, QVAC, or WDK imports.
-- `policy`: deterministic, versioned decision with machine-readable reasons. A policy pass is not wallet authorization or network verification.
+- `src/electron/treasury-domain.ts`: implemented pure domain boundary for currency metadata, exact integer minor-unit amounts, policy validation, and deterministic decisions. No UI, QVAC, Electron, persistence, or WDK imports.
+- `policy`: version-1 policy supports a per-transaction hard limit, period cap, supplied prior-spending total, and approval threshold. A policy pass is not wallet authorization or network verification.
 - `src/electron/qvac-worker.ts`: QVAC adapter in Electron `utilityProcess`, with a typed initialization/explanation protocol, one active operation, constrained prompt, bounded text output, and a model cached in Electron user data. QVAC does not access treasury policy or wallets.
 - `services/wallet`: narrow `WalletService` using verified WDK EVM methods. Separate online verification, user confirmation, signing, broadcast and receipt confirmation. No automatic execution from model output or policy result.
 - `services/persistence`: local, schema-versioned repository. Candidate is SQLite via Electron main process for one desktop host; IndexedDB is an alternative if platform/packaging favors it. Select only after a short persistence feasibility check in Milestone 1. Treat records as untrusted; do not claim encryption at rest.
@@ -59,7 +58,7 @@ interface AtgApi {
 }
 ```
 
-This is the current Milestone 2 surface. Proposal creation, policy evaluation, wallet actions, and transaction methods remain deferred and are not exposed.
+The Milestone 3 surface additionally exposes `evaluateProposal({ amount, currency })`. The privileged process validates the request and attaches a fixed synthetic example policy and explicitly supplied synthetic prior spending; renderer input cannot choose the policy, decision, or reason codes. No wallet action or transaction method is exposed.
 
 No renderer method accepts a filesystem path, command, raw transaction, arbitrary signer request, or generic IPC channel. QVAC has no wallet tools. `executeApprovedProposal` resolves only a stored proposal which has passed deterministic policy and fresh online checks, with an explicit confirmation bound to that proposal.
 
@@ -73,6 +72,16 @@ No renderer method accepts a filesystem path, command, raw transaction, arbitrar
 - Create the renderer with `{ contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true }`; serve only bundled `app://atg/` content. Set a restrictive CSP (`default-src 'none'`, local scripts/styles/assets only, `connect-src 'none'`), deny navigation and new windows, disable `<webview>`, and validate every sender. Electron official security guidance specifically calls for these controls.
 - QVAC utility process uses a narrow, validated request/response protocol. WDK lives in a privileged wallet service. Use a dedicated test wallet and keep secret material only in that process’s memory or a reviewed OS keyring; do not select or claim a keyring until its implementation is verified. Never return secrets to renderer or logs.
 - Cached inference has been observed in the actual Electron application with external networking disabled. No wallet, signing, or broadcast path exists in this milestone.
+
+## Milestone 3 deterministic treasury domain (2026-10-28)
+
+- `Money` is a supported ISO-like currency code plus non-negative safe integer minor units. Currency metadata explicitly declares decimal exponent: KES 2, USD 2, JPY 0. Decimal strings are parsed digit-by-digit into integer units; excess precision is rejected, never rounded. Unsafe integers, negative values, malformed strings and unsupported currencies are rejected. Comparisons require matching currencies.
+- The policy is version 1 with a KES 20,000 per-transaction hard limit, KES 60,000 synthetic example-week budget, KES 10,000 approval threshold, and supplied KES 24,000 synthetic prior spending. These values are demonstration fixtures only. There are no stored records or historical data and no claim that this is actual spending.
+- Precedence: missing policy → deny; malformed/unsupported policy → deny; invalid proposal → deny; currency mismatch or invalid/missing prior total → deny; per-transaction hard limit violation → deny; period cap violation → deny; threshold met → require human approval; otherwise allow. Hard violations cannot be upgraded by approval rules. Zero is allowed if it adds no spending and all supplied policy inputs are valid. Exact cap exhaustion is allowed; overspending is denied.
+- Stable reason codes: `POLICY_MISSING`, `POLICY_INVALID`, `TRANSACTION_INVALID`, `CURRENCY_MISMATCH`, `PRIOR_SPENDING_INVALID`, `HARD_TRANSACTION_LIMIT_EXCEEDED`, `PERIOD_BUDGET_EXCEEDED`, `APPROVAL_THRESHOLD_REACHED`, `WITHIN_POLICY_LIMITS`.
+- The deterministic outcome and human explanation come from pure domain code in the Electron service boundary. QVAC is neither imported nor invoked. AI may later paraphrase an already computed result, but its output cannot affect the policy, amounts, result or reason codes.
+- The renderer can send only the proposed amount and currency. Main validates and applies the fixed demo fixture; it never accepts a renderer-selected result or arbitrary policy. The UI labels the scenario synthetic and says explicitly that evaluation is not payment, signing, broadcasting or settlement. KES is a reporting/policy unit here, not a claim of KES payment support. Other supported currencies are not converted; comparison with the KES policy is denied.
+- Limitations: no persistence, imported spending records, exchange rates, currency conversion, recipient controls, wallet checks, transaction execution, or payment functionality. The example policy is compiled demo configuration, not a configurable production policy.
 
 ## Milestone 2 implementation record (2026-10-28)
 
