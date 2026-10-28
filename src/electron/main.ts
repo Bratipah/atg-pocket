@@ -6,13 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC } from './api.js';
 import type { AiStatus, ExplanationResponse } from './api.js';
-import { validateExplanationInput, validateModelAnswer, validateProposalInput } from './validation.js';
+import { validateAuditRequest, validateExplanationInput, validateModelAnswer, validateProposalInput } from './validation.js';
 import { DEMO_POLICY, DEMO_PRIOR_SPENDING, evaluatePolicy, parseMoney } from './treasury-domain.js';
 import type { EvaluateProposalResponse } from './api.js';
+import { TreasuryStore } from './treasury-store.js';
 import type { QvacCommand, QvacResponse } from './qvac-protocol.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { app, BrowserWindow, ipcMain, protocol, utilityProcess } = electron;
+const hasSingleInstance = app.requestSingleInstanceLock();
 const rendererDirectory = path.resolve(here, '../renderer');
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 let trustedWindow: BrowserWindowType | null = null;
@@ -24,6 +26,7 @@ let initializationPromise: Promise<AiStatus> | null = null;
 let workerStatus: AiStatus = { state: 'not-initialized', message: 'Model not initialized' };
 type QvacSuccess = Extract<QvacResponse, { ok: true }>;
 const pending = new Map<number, { resolve: (value: QvacSuccess) => void; reject: (error: Error) => void }>();
+let treasuryStore: TreasuryStore;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -102,6 +105,23 @@ function registerIpc(): void {
       priorSpending: DEMO_PRIOR_SPENDING,
       result: evaluatePolicy({ transaction: { amount: transaction }, policy: DEMO_POLICY, priorSpending: DEMO_PRIOR_SPENDING }),
     };
+  });
+  ipcMain.handle(IPC.createProposal, async (event, rawInput) => {
+    assertTrusted(event);
+    const request = validateProposalInput(rawInput);
+    const transaction = parseMoney(request.amount, request.currency);
+    const result = evaluatePolicy({ transaction: { amount: transaction }, policy: DEMO_POLICY, priorSpending: DEMO_PRIOR_SPENDING });
+    const proposal = await treasuryStore.createProposal({ transaction, evaluation: {
+      policyId: DEMO_POLICY.id, policyVersion: DEMO_POLICY.version, policyCurrency: DEMO_POLICY.currency,
+      perTransactionLimit: DEMO_POLICY.perTransactionLimit, period: DEMO_POLICY.periodBudget.period,
+      periodCap: DEMO_POLICY.periodBudget.cap, approvalThreshold: DEMO_POLICY.approvalThreshold,
+      priorSpending: DEMO_PRIOR_SPENDING, outcome: result.outcome, reasonCodes: [...result.reasonCodes],
+    } });
+    return { proposal, verification: (await treasuryStore.getAudit(proposal.id)).verification };
+  });
+  ipcMain.handle(IPC.listProposals, (event) => { assertTrusted(event); return treasuryStore.listProposals(); });
+  ipcMain.handle(IPC.getProposalAudit, (event, rawInput) => {
+    assertTrusted(event); const request = validateAuditRequest(rawInput); return treasuryStore.getAudit(request.proposalId);
   });
 }
 
@@ -231,7 +251,10 @@ async function createWindow(): Promise<void> {
   await window.loadURL('app://atg/index.html');
 }
 
-app.whenReady().then(async () => {
+if (!hasSingleInstance) {
+  app.quit();
+} else app.whenReady().then(async () => {
+  treasuryStore = new TreasuryStore(path.join(app.getPath('userData'), 'treasury-v1.json'));
   await registerAppProtocol();
   registerIpc();
   await createWindow();

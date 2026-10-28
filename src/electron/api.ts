@@ -1,4 +1,5 @@
 import type { PolicyEvaluationResult, PolicyConfiguration, Money } from './treasury-domain.js';
+import type { AuditEvent, AuditVerification, PersistedProposal } from './treasury-store.js';
 
 export interface ShellStatus {
   appVersion: string;
@@ -18,6 +19,8 @@ export interface EvaluateProposalResponse {
   priorSpending: Money;
   result: PolicyEvaluationResult;
 }
+export interface CreateProposalResponse { proposal: PersistedProposal; verification: AuditVerification }
+export interface ProposalAuditResponse { events: AuditEvent[]; verification: AuditVerification }
 
 export interface AtgApi {
   getShellStatus(): Promise<ShellStatus>;
@@ -25,6 +28,9 @@ export interface AtgApi {
   initializeAi(): Promise<AiStatus>;
   explainTreasury(input: ExplanationRequest): Promise<ExplanationResponse>;
   evaluateProposal(input: EvaluateProposalRequest): Promise<EvaluateProposalResponse>;
+  createProposal(input: EvaluateProposalRequest): Promise<CreateProposalResponse>;
+  listProposals(): Promise<PersistedProposal[]>;
+  getProposalAudit(input?: { proposalId?: string }): Promise<ProposalAuditResponse>;
 }
 
 export const IPC = {
@@ -33,4 +39,7 @@ export const IPC = {
   initializeAi: 'ai:initialize',
   explainTreasury: 'ai:explain-treasury',
   evaluateProposal: 'treasury:evaluate-proposal',
+  createProposal: 'treasury:create-proposal',
+  listProposals: 'treasury:list-proposals',
+  getProposalAudit: 'treasury:get-audit',
 } as const;

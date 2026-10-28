@@ -85,8 +85,8 @@ try {
       let text = '';
       while (Date.now() < deadline) {
         await pause(50);
-        const resultText = await evaluate("document.querySelector('.policy-result')?.innerText || ''", sessionId);
-        if (resultText.includes(displayed)) { text = await evaluate("document.querySelector('.policy-result strong')?.textContent || ''", sessionId); break; }
+        const resultText = await evaluate("Array.from(document.querySelectorAll('.policy-result div')).map((item) => item.innerText).join('\\n')", sessionId);
+        if (resultText.includes(displayed)) { text = await evaluate(`Array.from(document.querySelectorAll('.policy-result div')).find((item) => item.innerText.includes(${JSON.stringify(displayed)}))?.querySelector('strong')?.textContent || ''`, sessionId); break; }
       }
       return text;
     };

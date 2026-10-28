@@ -14,8 +14,8 @@ Electron main process (sender validation + typed service routing)
   ├── Treasury domain + deterministic policy engine
   ├── QVAC utility process (@qvac/sdk; Bare worker)
   ├── Privileged wallet service (WDK; explicit approved proposal only)
-  ├── Local persistence (versioned SQLite or IndexedDB decision pending)
-  └── Audit/state transition service
+  ├── Local persistence (versioned JSON snapshot under Electron user data)
+  └── SHA-256 hash-chained audit event service
 ```
 
 ### Why this is the smallest plausible runtime
@@ -30,8 +30,8 @@ Electron main process (sender validation + typed service routing)
 - `policy`: version-1 policy supports a per-transaction hard limit, period cap, supplied prior-spending total, and approval threshold. A policy pass is not wallet authorization or network verification.
 - `src/electron/qvac-worker.ts`: QVAC adapter in Electron `utilityProcess`, with a typed initialization/explanation protocol, one active operation, constrained prompt, bounded text output, and a model cached in Electron user data. QVAC does not access treasury policy or wallets.
 - `services/wallet`: narrow `WalletService` using verified WDK EVM methods. Separate online verification, user confirmation, signing, broadcast and receipt confirmation. No automatic execution from model output or policy result.
-- `services/persistence`: local, schema-versioned repository. Candidate is SQLite via Electron main process for one desktop host; IndexedDB is an alternative if platform/packaging favors it. Select only after a short persistence feasibility check in Milestone 1. Treat records as untrusted; do not claim encryption at rest.
-- `services/audit`: append-only application-level events, explicitly not cryptographically tamper-proof.
+- `src/electron/treasury-store.ts`: versioned local repository in Electron main. JSON snapshot uses serialized operations and fsync + atomic rename; malformed/incompatible data fails closed. Treat records as untrusted; no encryption-at-rest claim.
+- Audit events are appended within the same atomic snapshot as the proposal/evaluation. Canonical JSON and SHA-256 chaining detect local edits or broken links, but do not prevent full-history rewriting by a machine owner.
 
 ## Initial integration choices (provisional)
 
@@ -95,3 +95,12 @@ No renderer method accepts a filesystem path, command, raw transaction, arbitrar
 ## Deliberately deferred
 
 No application shell, design system, persistence implementation, financial domain code, tests, wallet code, or model integration is part of Milestone 0. Those begin only after this plan is approved. The interface and database technology can be refined during Milestone 1 without changing the core integration boundaries.
+
+## Milestone 4 implementation record (2026-10-28)
+
+- `treasury-v1.json` resides under Electron's application-specific user-data directory. Schema version 1 uses exact-key validated records and preserves incompatible or corrupt files without resetting them. No migrations or automatic backups exist.
+- Main validates proposal input, parses exact money, reruns the deterministic engine using the compiled synthetic policy and prior-spending fixture, and atomically saves the user-created record and event. The renderer cannot supply policy, decision, reason codes, or a path. `allow` is only a policy result.
+- Each audit event includes UUID, UTC timestamp, type, proposal ID, minimal details, prior hash and current SHA-256. Canonical serialization sorts object keys recursively, preserves array order, and emits compact UTF-8 JSON. The first previous hash is 64 zeroes. Verification identifies malformed entries, broken links, and hash mismatches. No external anchor exists; full local rewrite and rehash remains possible.
+- Proposal schema retains policy ID/version and applicable limits, threshold, period cap, synthetic prior spending, result and reason codes. Evaluation kind is marked `initial` to distinguish it from any future reevaluation; no policy editing or reevaluation UI is implemented in this milestone.
+- Atomicity uses a unique mode-0600 temp file, file fsync, atomic same-directory rename and directory fsync. The single-instance lock plus serialized service queue prevents overlapping application writers. Failure before rename leaves the old snapshot; a directory-fsync failure after rename is reported as uncertain durability and the UI requires reload before retry. Abandoned temp files do not replace the snapshot. Tests exercise failure, restart and concurrent operations in temporary directories.
+- Records and audit payloads contain no free-form description or secret fields. Dashboard examples and policy inputs remain visibly synthetic; persisted proposal records are labeled user-created local records. Audit verification is not transaction evidence.

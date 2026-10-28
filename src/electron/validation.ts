@@ -11,6 +11,14 @@ export function validateProposalInput(value: unknown): EvaluateProposalRequest {
   return { amount: request.amount, currency: request.currency };
 }
 
+export function validateAuditRequest(value: unknown): { proposalId?: string } {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid audit request.');
+  const request = value as Record<string, unknown>;
+  if (Object.keys(request).length !== 1 || typeof request.proposalId !== 'string' || !/^[0-9a-f-]{36}$/i.test(request.proposalId)) throw new Error('Invalid audit request.');
+  return { proposalId: request.proposalId };
+}
+
 export function validateExplanationInput(value: unknown): ExplanationRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Enter a treasury context.');
   const keys = Object.keys(value);

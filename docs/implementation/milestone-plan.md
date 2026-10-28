@@ -9,9 +9,14 @@
 - [x] **M1 — Desktop foundation and design system:** Electron + React + TypeScript shell, hardened renderer boundary and production build.
 - [x] **M2 — QVAC local inference:** utility-process adapter, pinned Qwen model, advisory explanation UI, input/output validation, unit/security checks, real desktop inference, cached offline inference and failure handling. See record below.
 - [x] **M3 — Treasury domain and deterministic policy engine:** exact-money representation, domain types, deterministic policy rules, narrow main-process evaluation IPC, synthetic demonstration UI and automated tests. Keep model authority out of policy decisions.
-- [ ] **Later — Local persistence/audit, WDK, offline-to-online lifecycle, product readiness, security regression and submission pack:** each remains gated. No wallet, payment, signing or transaction workflow is implemented.
+- [x] **M4 — Local proposal persistence and tamper-evident audit trail:** versioned local records, atomic proposal/evaluation/event writes, verification UI, corruption handling, tests and docs. No wallet, payment, signing or transaction workflow is implemented.
+- [ ] **Later — WDK, offline-to-online lifecycle, product readiness, security regression and submission pack:** remains gated for explicit approval.
 
-Each milestone must be implemented, verified, reviewed and documented before the next begins. Stop for explicit user approval at each gate. M3 is complete after its verification record below; persistence and wallet work remain gated pending explicit approval.
+Each milestone must be implemented, verified, reviewed and documented before the next begins. Stop for explicit user approval at each gate. M4 is complete at this gate; wallet and transaction work remain gated pending explicit approval.
+
+## M4 verification record (2026-10-28)
+
+Results: `npm run typecheck`, `npm run build`, `npm test` (25/25), and `npm audit --audit-level=moderate` (0 findings) passed. The Electron `policy-demo` regression passed allow, require-approval, hard-deny, and currency-mismatch cases using a temporary config directory. The existing `offline-success` QVAC regression initialized its cached model and produced a local explanation (8.5 s initialization; 17.9 s displayed inference in this run). The host emitted a GTK missing-schema warning, which did not affect either application check. Automated tests use temporary store files and cover restart, failed writes, stale temp files, concurrent writes, modified/deleted/reordered/malformed chain entries, invalid storage, IPC shape validation and audit payload minimization.
 
 ## Offline demonstration plan
 

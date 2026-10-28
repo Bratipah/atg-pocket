@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AiStatus, EvaluateProposalResponse, ExplanationResponse, ShellStatus } from '../../electron/api';
+import type { AiStatus, ExplanationResponse, ShellStatus } from '../../electron/api';
+import type { PersistedProposal } from '../../electron/treasury-store';
 import { CURRENCY_METADATA } from '../../electron/treasury-domain';
 
 const navigation = [
@@ -22,7 +23,9 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [proposalAmount, setProposalAmount] = useState('8000');
   const [proposalCurrency, setProposalCurrency] = useState('KES');
-  const [evaluation, setEvaluation] = useState<EvaluateProposalResponse | null>(null);
+  const [proposals, setProposals] = useState<PersistedProposal[]>([]);
+  const [storageState, setStorageState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [auditValid, setAuditValid] = useState<boolean | null>(null);
   const [policyError, setPolicyError] = useState('');
 
   function formatMoney(money: { currency: keyof typeof CURRENCY_METADATA; minorUnits: number }): string {
@@ -31,14 +34,24 @@ export function App() {
     return `${money.currency} ${exponent ? `${digits.slice(0, -exponent)}.${digits.slice(-exponent)}` : digits}`;
   }
 
-  async function evaluateProposal() {
-    setPolicyError(''); setEvaluation(null);
-    try { setEvaluation(await window.atg.evaluateProposal({ amount: proposalAmount, currency: proposalCurrency })); }
-    catch (reason) { setPolicyError(reason instanceof Error ? reason.message : 'The proposal could not be evaluated.'); }
+  async function refreshProposals() {
+    setStorageState('loading');
+    try {
+      const [records, audit] = await Promise.all([window.atg.listProposals(), window.atg.getProposalAudit()]);
+      setProposals(records); setAuditValid(audit.verification.valid); setStorageState('ready');
+    } catch { setStorageState('error'); setAuditValid(false); }
+  }
+  async function createProposal() {
+    setPolicyError('');
+    try {
+      await window.atg.createProposal({ amount: proposalAmount, currency: proposalCurrency });
+      await refreshProposals();
+    } catch (reason) { setPolicyError(reason instanceof Error ? reason.message : 'The proposal could not be saved.'); setStorageState('error'); }
   }
 
   useEffect(() => {
     if (!window.atg) return;
+    void refreshProposals();
     void window.atg.getShellStatus().then(setStatus).catch(() => setStatus(null));
     void window.atg.getAiStatus().then(setAiStatus).catch(() => setAiStatus({ state: 'failed', message: 'Local model status is unavailable.' }));
   }, []);
@@ -110,21 +123,22 @@ export function App() {
 
           <section className="panel policy-demo" aria-labelledby="policy-demo-heading">
             <div className="panel-heading"><div><div className="section-kicker">02 <span /> DETERMINISTIC POLICY</div><h2 id="policy-demo-heading">Evaluate a synthetic proposal</h2></div><span className="demo-badge"><span /> SYNTHETIC SCENARIO</span></div>
-            <p className="ai-advisory">This policy evaluation runs locally in the privileged application process. KES is the reporting and policy currency here; this is not payment or settlement support. No history is persisted.</p>
+            <p className="ai-advisory">Your proposal is saved locally and evaluated in the privileged application process. The compiled policy and prior-spending inputs are synthetic. KES is a reporting and policy currency here; this is not payment or settlement support.</p>
             <div className="policy-facts"><span>Per transaction hard limit <strong>KES 20,000.00</strong></span><span>Example week cap <strong>KES 60,000.00</strong></span><span>Approval threshold <strong>KES 10,000.00</strong></span><span>Supplied prior spending <strong>KES 24,000.00</strong></span></div>
             <div className="proposal-form">
               <div className="proposal-input"><label className="ai-label" htmlFor="proposal-amount">Proposed amount</label>
               <input id="proposal-amount" inputMode="decimal" value={proposalAmount} onChange={(event) => setProposalAmount(event.target.value)} aria-describedby="proposal-currency-note" />
               </div><select aria-label="Proposal currency" value={proposalCurrency} onChange={(event) => setProposalCurrency(event.target.value)}>{Object.keys(CURRENCY_METADATA).map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
-              <button className="ai-button" onClick={() => void evaluateProposal()}>Evaluate proposal</button>
+              <button className="ai-button" onClick={() => void createProposal()} disabled={storageState === 'loading'}>Save &amp; evaluate</button>
             </div>
             <small id="proposal-currency-note" className="policy-note">Currency selection labels the proposal amount only. No exchange rate or settlement conversion is applied.</small>
             {policyError && <p className="ai-error" role="alert">{policyError}</p>}
-            {evaluation && <div className={`policy-result outcome-${evaluation.result.outcome}`} aria-live="polite">
-              <strong>{evaluation.result.outcome.replace('_', ' ')}</strong><span>Proposal: {formatMoney(evaluation.transaction)} · Policy currency: {evaluation.policy.currency}</span>
-              <span>Reason code: {evaluation.result.reasonCodes.join(', ')}</span><p>{evaluation.result.explanation}</p>
-              <small>Evaluation only. No payment was made, signed, broadcast, or settled.</small>
-            </div>}
+            {storageState === 'loading' && <p role="status">Loading local proposal records…</p>}
+            {storageState === 'error' && <p className="ai-error" role="alert">Local storage could not be verified or updated. It may be damaged, from an unsupported version, or a write may have an uncertain result. Reload records before retrying; existing data is never automatically reset.</p>}
+            <div className="policy-result" aria-live="polite"><strong>LOCAL AUDIT: {auditValid === null ? 'CHECKING' : auditValid ? 'VERIFIED' : 'UNAVAILABLE / INVALID'}</strong><span>Hash verification checks local event consistency; it does not prove a transaction occurred.</span></div>
+            <div className="policy-result"><strong>USER-CREATED LOCAL RECORDS ({proposals.length})</strong>{proposals.length === 0 && storageState === 'ready' && <span>No proposals have been saved on this device.</span>}
+              {proposals.map((proposal) => <div key={proposal.id}><strong>{proposal.evaluation.outcome.replace('_', ' ')}</strong><span>{formatMoney(proposal.transaction)} · {new Date(proposal.createdAt).toLocaleString()}</span><span>Reason: {proposal.evaluation.reasonCodes.join(', ')} · policy {proposal.evaluation.policyId} v{proposal.evaluation.policyVersion}</span><small>Synthetic policy inputs · evaluation only. No approval, payment, signature, broadcast, or settlement.</small></div>)}
+            </div>
           </section>
 
           <section className="lower-grid">
