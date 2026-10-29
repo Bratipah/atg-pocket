@@ -82,6 +82,8 @@ Linux wallet setup requires a graphical session and GNOME Keyring/libsecret conf
 
 Requires Ubuntu desktop, Node.js 22.17+ and npm 10.9+ (tested feasibility host was newer).
 
+On Linux, `npm run dev:electron` and `npm start` keep Chromium sandboxing enabled. Electron's bundled `chrome-sandbox` must be root-owned with mode `4755`. The launcher checks this before startup and prints the exact repair commands if the helper was unpacked with unsafe permissions. Reinstalling dependencies may reset the permissions.
+
 ```bash
 npm ci
 npm run dev:electron

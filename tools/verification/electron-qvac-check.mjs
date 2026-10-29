@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
+import { getElectronLaunchConfig } from '../electron-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const mode = process.argv[2] ?? 'offline-success';
@@ -9,9 +10,10 @@ if (!['offline-success', 'offline-missing', 'policy-demo', 'wallet-ui'].includes
   throw new Error('Usage: node tools/verification/electron-qvac-check.mjs [offline-success|offline-missing|policy-demo|wallet-ui]');
 }
 
-const child = spawn(path.join(root, 'node_modules/electron/dist/electron'), ['.', '--remote-debugging-pipe'], {
+const launch = await getElectronLaunchConfig();
+const child = spawn(launch.electronPath, ['.', '--remote-debugging-pipe'], {
   cwd: root,
-  env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')),
+  env: launch.env,
   stdio: ['ignore', 'inherit', 'inherit', 'pipe', 'pipe'],
 });
 const read = child.stdio[4];

@@ -6,10 +6,10 @@
   "description": "Local-first treasury oversight desktop foundation",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:electron": "npm run build && env -u ELECTRON_RUN_AS_NODE electron .",
+    "dev:electron": "npm run build && node tools/launch-electron.mjs",
     "build": "tsc -p tsconfig.electron.json && vite build",
     "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "start": "node tools/launch-electron.mjs",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
   "dependencies": {
