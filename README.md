@@ -1,76 +1,135 @@
-# ATG Pocket
+# ATG Pocket — Offline-First Stablecoin Treasury Guardian
 
-ATG Pocket is an offline-first treasury oversight concept for small businesses. This repository contains Milestones 1–4 plus a narrowly scoped **Milestone 5A Sepolia native ETH test workflow**. The app can create or restore a dedicated Sepolia wallet, store its recovery seed only as Electron `safeStorage` ciphertext using GNOME Keyring, evaluate a separate exact-wei policy, require approval and a separate OS confirmation, sign/broadcast through WDK, and independently query a second Sepolia RPC for receipt status. A real transfer has not yet been completed or verified; the wallet must be backed up and funded with test ETH first. KES examples remain synthetic and are never used for crypto decisions. Local AI provides advisory explanations only and has no role in policy decisions.
+**Private on-device explanations. Deterministic controls. Explicitly reviewed testnet payments.**
 
-## Requirements
+ATG Pocket is a self-custodial treasury assistant prototype for small businesses. It explores how businesses can understand treasury decisions, compare cross-border payment costs, and avoid unnecessary conversion and transfer fees while keeping sensitive context local.
 
-- Ubuntu desktop with a graphical session
-- Node.js 22.17+ and npm 10.9+
+The current prototype is deliberately narrower than that vision: it provides a synthetic KES policy example, locally persisted proposals and audit events, a QVAC-powered advisory copilot, and a separate native ETH wallet workflow on Ethereum Sepolia. It does not hold or settle business KES, USDT, or USDC. Sepolia ETH is valueless testnet currency. No live stablecoin liquidity, swaps, FX savings, production settlement, or cross-chain routing are implemented.
 
-## Setup and run
+## Feature status
+
+| Status | Capability | Evidence / limit |
+|---|---|---|
+| Implemented and tested | QVAC local explanation in an Electron utility process | Offline cache reuse demonstrated; output is advisory and can be slow or wrong. |
+| Implemented and tested | Deterministic synthetic KES proposal policy | Integer minor units, fail-closed checks; no conversion or settlement. |
+| Implemented and tested | Local proposal persistence and SHA-256 hash-chained audit verification | Local tamper evidence only, not a remote audit anchor. |
+| Implemented and tested | Separate Sepolia native ETH policy and WDK workflow | Automated policy, lifecycle, security-boundary and storage checks exist. |
+| Implemented and tested | Treasury cost-comparison planner | Uses only explicit user-entered data; default values are synthetic examples, never market quotes. |
+| Implemented; real transaction not demonstrated | Sepolia wallet creation/recovery, quote, approval, OS confirmation, signing/broadcast lifecycle and independent receipt lookup | Automated checks are not a real transfer. **A real Sepolia transfer has not been completed and independently verified.** |
+| Planned / unsupported | USDT/USDC market quotes, liquidity, swaps, FX routing, KES settlement, mainnet or production treasury execution | No provider, contracts, route, or production controls are configured. |
+
+## Product and architecture
+
+The desktop application uses Electron, React and TypeScript. The renderer is a restricted presentation layer; Electron main validates IPC and coordinates domain services. QVAC inference runs in an isolated utility process. The deterministic policy engine is independent of QVAC: model text cannot set amounts, authorize transfers, change policy, or bypass confirmation.
+
+```mermaid
+flowchart LR
+  UI[React renderer<br/>restricted IPC] --> Main[Electron main<br/>validated orchestration]
+  Main --> Policy[Deterministic policies]
+  Main --> Store[Local proposal store<br/>hash-chained events]
+  Main --> AI[QVAC utility process<br/>Qwen3 local model]
+  Main --> Wallet[WDK wallet service<br/>Sepolia native ETH]
+  Wallet --> RPC[Sepolia RPC]
+  Wallet --> Verify[Independent receipt RPC]
+```
+
+The local audit chain detects changes to retained history, but an owner of the machine can rewrite the whole file and recompute hashes. It is not encrypted-at-rest, remotely anchored, or proof that a payment happened.
+
+### QVAC local copilot
+
+- Application SDK: [`@qvac/sdk@0.22.0`](package.json); model catalog ID `QWEN3_600M_INST_Q4`.
+- Model: Qwen3 600M Q4_0 GGUF, 382,156,480 bytes (about 365 MiB), from `unsloth/Qwen3-0.6B-GGUF`, revision `50968a4468ef4233ed78cd7c3de230dd1d61a56b`.
+- SHA-256: `33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb`. The pinned model repository identifies Apache-2.0; include its license and attribution with any redistributed weights. The SDK is separately licensed Apache-2.0.
+- Invocation: [`qvac-worker.ts`](src/electron/qvac-worker.ts); utility-process lifecycle and protocol: [`main.ts`](src/electron/main.ts), [`qvac-protocol.ts`](src/electron/qvac-protocol.ts). The model cache is managed by QVAC under Electron user data.
+- First initialization requires internet to obtain the model. Once cached, inference can run offline. Initialize the model once while connected before the offline demonstration; then disconnect networking and use **Generate explanation**. The recorded feasibility run separately confirmed cached inference in a network-isolated process; the packaged product’s offline behavior should be demonstrated on the submission device.
+- Feasibility measurements on the tested Ubuntu device: online load 4.882 s / inference 8.007 s; isolated offline load 8.411 s / inference 12.911 s; measured QVAC process-tree peak RSS 523,911,168 bytes. Electron utility-process feasibility run: cached load 7.902 s / inference 7.068 s. These are individual runs, not performance guarantees. In a current UI smoke response, with KES 60,000 budget, KES 24,000 prior spending and KES 8,000 proposed purchase, the model incorrectly reported KES 46,000 remaining (the arithmetic is KES 28,000). The model also showed `<think>` leakage and ignored output constraints. Treat every answer as untrusted explanation, not financial logic.
+
+### Wallet and transfer boundary
+
+The wallet workflow supports **only native ETH on Ethereum Sepolia (chain ID 11155111)**. It uses `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24`, an explicit compatibility override for `@tetherto/wdk-wallet@1.0.0-beta.21`, and ethers 6.17.0. Core implementation: [`sepolia-wallet.ts`](src/electron/sepolia-wallet.ts), [`sepolia-domain.ts`](src/electron/sepolia-domain.ts), and [`transfer-store.ts`](src/electron/transfer-store.ts). See [official WDK documentation](https://docs.wdk.tether.io/).
+
+The WDK service runs in Electron main. On Linux, setup requires GNOME Keyring (`gnome_libsecret`) and Electron async `safeStorage`; the 12-word recovery phrase is shown once in a separate restricted window. Only OS-encrypted phrase ciphertext is persisted. Decrypted seed material exists transiently in main-process memory and JavaScript strings cannot be reliably erased. Keep a separate demo wallet; loss of both device and phrase has no recovery path.
+
+The synthetic KES policy and exact-wei Sepolia ETH test policy are separate. A Sepolia proposal receives fresh chain, balance and fee checks; eligible transfers need explicit approval when policy says so and a second OS confirmation. The service signs/broadcasts through WDK, records lifecycle states, treats ambiguous broadcast as unknown without retry, and checks a second RPC for receipt and native-transfer shape. Broadcast is not confirmation. The repository has **no independently verified real transfer**.
+
+## Treasury cost planning
+
+The planner accepts two or more explicitly entered route observations and compares their stated effective cost using the same source amount and a user-supplied reference rate. It computes `(source amount + source-denominated fee) × reference rate − net destination amount`, retaining negative values and ranking lower cost first. This is arithmetic over user input, not a quote, routing, or verification service. For a meaningful comparison, use the same source/destination assets, amount, timing, and fee assumptions; include spread and every known provider, network, and transfer fee consistently. Do not treat the result as executable or realized savings.
+
+A live quote integration was not a safe fit for this alignment pass: [0x Swap API](https://docs.0x.org/docs/introduction/quickstart/swap-tokens-with-0x-swap-api) and the [Uniswap quote API](https://developers.uniswap.org/docs/api-reference/aggregator_quote) require API keys, while a useful comparison additionally needs verified chain/token contracts, liquidity availability, route-specific fee fields, and an independently documented baseline. No key or configured asset route is present. No addresses, liquidity, prices, or live quote claims are supplied by this app.
+
+## Offline and online behavior
+
+| Capability | Network needed? | Notes |
+|---|---|---|
+| QVAC inference after model cache is complete | No | First model download needs network. |
+| Synthetic KES policy evaluation | No | Inputs and policy are local fixtures. |
+| Proposal persistence and local audit verification | No | Stored in Electron user data. |
+| Cost comparison of entered quote values | No | No quote source or market lookup. |
+| Sepolia wallet setup / restore | Yes | Secure local keyring plus RPC chain identity check. |
+| Balance refresh and fee estimate | Yes | Sepolia RPC; values can become stale immediately. |
+| Signing and broadcast | Yes | Fresh network/policy checks and explicit user confirmation. |
+| Receipt verification | Yes | Independent Sepolia RPC. Offline proposals are never broadcasts or settlements. |
+| Future liquidity / FX lookup | Yes | Not implemented. |
+
+## Tested device and requirements
+
+Feasibility host: Ubuntu 26.04 LTS, x86_64; AMD Athlon Gold 3150U (2 cores / 4 threads), integrated Radeon Vega 3 Graphics, 20 GiB RAM and 8 GiB swap. Vulkan reported AMD RADV API 1.4.335. Feasibility tooling recorded Node.js 24.22.0, npm 12.2.0, g++ 15.2, and `libatomic1`; the initial app setup specified Node.js 22.17+ and npm 10.9+. Model fit estimated 8.025 GB remaining memory budget at the time of that probe. The separate offline run measured 523,911,168 bytes peak QVAC process-tree RSS. Host memory and timings vary. Ubuntu device/package values are feasibility notes, not a guarantee that another host is supported.
+
+Linux wallet setup requires a graphical session and GNOME Keyring/libsecret configured for Electron `safeStorage`. Sepolia RPC access is required for every chain action. The QVAC model artifact license is Apache-2.0; review the model notice and retain attribution when distributing the weights.
+
+## Install, run, verify
+
+Requires Ubuntu desktop, Node.js 22.17+ and npm 10.9+ (tested feasibility host was newer).
 
 ```bash
 npm ci
 npm run dev:electron
 ```
 
-`dev:electron` compiles the Electron TypeScript files, builds the React renderer, and opens the desktop window. To work on the renderer with Vite's browser preview, use `npm run dev`; the preview does not include Electron's preload bridge.
-
-## Verify and build
+`npm run dev` starts the renderer-only Vite preview; it does not include the Electron preload bridge. Before an offline AI demo, launch the app while connected, initialize the model, and wait for readiness. Then disconnect networking and request an explanation.
 
 ```bash
 npm run typecheck
+npm test
 npm run build
 npm start
 ```
 
-`npm start` opens the last production build. `npm test` runs input/output and Electron boundary tests after building. The separate feasibility scripts under `tools/feasibility/` remain preserved evidence and are not application runtime dependencies.
+`npm test` builds and runs the Node test suite, including policy, storage/audit, wallet lifecycle/security, and inference boundary tests. `npm audit` checks the installed dependency tree; see the dependency note below. `npm start` opens the last production build. The preserved smoke workspaces under `tools/feasibility/` are historical feasibility artifacts, not app runtime dependencies.
 
-## Structure
+## Dependency audit
 
-- `src/electron/main.ts` — window lifecycle, local `app://atg` asset protocol, CSP, sender validation, allowlisted IPC, treasury evaluation/persistence entry point, and QVAC utility-process lifecycle.
-- `src/electron/treasury-store.ts` — versioned user-data JSON snapshot, atomic replacement, record validation, and SHA-256 append-only audit chain.
-- `src/electron/treasury-domain.ts` — currency metadata, exact integer minor-unit parsing, policy validation, and pure fail-closed policy evaluation. It imports no QVAC or Electron code.
-- `src/electron/sepolia-domain.ts` — separate versioned test-only Sepolia native ETH policy, exact wei conversions, and EVM recipient validation.
-- `src/electron/sepolia-wallet.ts` — trusted main-process WDK wallet service, OS-encrypted seed vault, fee quote, explicit signing/broadcast, and independent Sepolia RPC receipt lookup.
-- `src/electron/transfer-store.ts` — atomic lifecycle snapshot and hash-chained public transaction audit events; interrupted submissions recover as unknown.
-- `src/electron/qvac-worker.ts` — isolated QVAC model initialization and constrained text completion.
-- `src/electron/preload.cts` — narrow typed app methods for AI, synthetic policy and the bounded Sepolia wallet workflow; no Node, raw IPC, filesystem, signing primitive or raw WDK object.
-- `src/electron/wallet-backup-preload.cts` and `wallet-backup.html` — separate restricted one-purpose phrase backup/recovery window; phrase IPC is unavailable in the main renderer.
-- `src/renderer/` — React interface and local design system; policy input is sent to main and the renderer cannot submit a policy or decision. Saved local records are labeled separately from synthetic dashboard examples.
-- `tools/feasibility/` — isolated, preserved QVAC and WDK smoke evidence; neither is imported by the application.
+The root application dependency tree returned **zero findings** from `npm audit` during this alignment pass. The preserved standalone QVAC feasibility workspace has a separate historical lockfile and was previously reported with three high findings involving transitive `zod@4.6.5`; that workspace is not used by the application. Re-audit both trees before packaging if the smoke workspace is reused.
 
-## Trust boundaries and planned integrations
+## What the team built and reused
 
-The renderer is an untrusted presentation process with context isolation, sandboxing, Node integration disabled, and a restrictive policy that denies network connections. Main-process IPC validates the calling window, exact local app origin, and main frame. Navigation and new windows are denied. Only local model status, explicit initialization, and one bounded explanation request are exposed.
+Implemented in ATG Pocket: Electron security and IPC boundaries, QVAC adapter and advisory UI, deterministic KES example and Sepolia ETH policies, local proposal/audit persistence, wallet onboarding/backup boundary, transfer lifecycle and second-RPC receipt verification, and entered-quote comparison planner. Reused third-party dependencies include Electron, React, TypeScript, QVAC SDK/model, WDK, ethers and supporting packages. The pretrained Qwen3 model and vendor SDKs were not created by this team. The isolated QVAC and WDK feasibility harnesses were retained and informed the implementation. No external market-data provider is connected.
 
-Future QVAC inference belongs in the isolated Electron utility-process architecture already exercised by the QVAC feasibility harness, with a narrow validated request/response protocol. WDK and any secret handling must remain in a privileged service boundary; seed material, keys, signing methods, and raw transaction authority must never enter renderer state or preload. No secret storage or signing implementation has been selected or built. A later milestone must verify packaged behavior and the host's secure storage option before wallet onboarding.
+## Limitations and roadmap
 
-The renderer cannot reach the network. Sepolia network requests run in the trusted main process. Demo treasury values and the sample treasury context are synthetic and are not wallet balances. AI-generated explanations are untrusted advisory text and do not authorize payments, enforce limits, change budgets, or make binding financial decisions.
+Current demo policies and dashboard figures are synthetic. Sepolia ETH is test-only and does not represent stablecoin treasury value. Local audit chaining is not tamper-proof against a machine owner. Local records have no remote backup; wallet recovery depends on the user’s phrase. Wallet network actions rely on public RPCs and GNOME Keyring. No live stablecoin settlement, production safeguards, quote provider, FX engine, liquidity route, swap, bridge, or mainnet support exists.
 
-## Milestone 5A — Sepolia native ETH test workflow
+Roadmap: establish asset and jurisdiction requirements; identify permitted quote providers and verified supported networks/contracts; compare indicative and executable quotes against a same-time, same-amount baseline with full spread, provider, network and transfer costs; add freshness and provenance controls; independently validate a test flow; only then consider any production scope.
 
-- Only Ethereum Sepolia chain ID `11155111` and native test ETH are supported. Test ETH is not represented as having monetary value. No mainnet, ERC-20, swaps, or bridges are supported.
-- Pinned runtime packages are `@tetherto/wdk@1.0.0-beta.22` and `@tetherto/wdk-wallet-evm@1.0.0-beta.24`; `@tetherto/wdk-wallet@1.0.0-beta.21` is overridden explicitly to keep the two packages' shared class declarations compatible. Native ETH uses the verified account APIs `getAccount`, `getAddress`, `getBalance`, `quoteSendTransaction`, `signTransaction`, `sendTransaction`, and `dispose`. The token-only `transfer` method is not used. Fee construction uses ethers `JsonRpcProvider.estimateGas`, `getFeeData`, and `getTransactionCount`.
-- Policy `sepolia-native-eth-test-v1`: max transfer `0.001 ETH` (10^15 wei); human approval at or above `0.0005 ETH` (5×10^14 wei); fee ceiling `0.0001 ETH` (10^14 wei). Amounts and fees use `bigint` wei. Fee estimates must be available and within ceiling; available balance must cover amount plus fee. Policy order is missing/invalid input or policy, wrong chain/asset, unavailable fee, fee ceiling, hard amount limit, approval threshold, then allow.
-- Setup generates a 12-word WDK phrase only after GNOME Keyring and async `safeStorage` availability are confirmed. A separate modal window with its own narrow preload displays the phrase once. The encrypted vault is atomically persisted with mode 0600 only after explicit backup confirmation. Restore uses the same dedicated window and only persists the OS-encrypted phrase after validation and user confirmation. Main renderer never receives phrase/private key or signing payload. Losing both device and phrase means losing access; no remote recovery exists.
-- A proposal is quoted and audited before approval. `require_approval` needs a distinct approval action; every eligible proposal then requires a second OS confirmation that displays network, recipient, amount, fee and total. Critical inputs, chain, balance, fee and policy are checked again immediately before WDK signs. Signed data remains in main-process memory and is not logged or audited.
-- Lifecycle: proposed, awaiting approval, ready to confirm, signing, signed, broadcast, confirmed, failed, unknown, cancelled, rejected. A lost/ambiguous broadcast response is never retried automatically. After restart, unconfirmed quotes expire; interrupted signing/broadcast states become unknown. Broadcast is not confirmation. Receipt verification queries a second endpoint (`https://public.1rpc.io/sepolia`) and checks chain, transaction hash, successful receipt, native transfer shape, recipient and exact value before recording confirmed.
-- Public Sepolia RPCs and GNOME Keyring are host dependencies. Local hash chaining is tamper-evident only while the retained chain is trusted; it is not a remote audit anchor. The decrypted seed exists transiently in main process memory to initialize WDK, and JavaScript strings cannot be reliably zeroed. Packaged installer behavior and real transfer proof remain outstanding.
+## Demo and submission checklist
 
-Milestone 3 adds a KES example policy (KES 20,000 per-transaction hard limit; KES 60,000 example-week cap; KES 10,000 approval threshold) and synthetic prior spending of KES 24,000. KES is the reporting and policy currency for this scenario; this does not represent KES settlement or payment support. Incompatible policy currencies fail closed; there is no currency conversion. Amounts use integer minor units and reject excess decimal precision without rounding. Prior spending remains a fixture, not transaction history.
+**Offline demonstration**
 
-## Milestone 4 local records and audit
+1. Install dependencies and run `npm run dev:electron` while online.
+2. Initialize QVAC and wait until the model is ready.
+3. Disconnect networking; generate an advisory explanation and show its latency/limitations.
+4. Evaluate a synthetic KES proposal and verify local audit status.
+5. Show the quote planner with clearly identified user-entered or synthetic data.
 
-- Proposals are stored at `app.getPath('userData')/treasury-v1.json`; the renderer cannot provide this path. Only Electron main accesses the file. One Electron app instance is allowed, and in-process operations are serialized.
-- The JSON envelope has `schemaVersion: 1`, `proposals`, and `events`. Proposal schema 1 records a UUID, UTC timestamps, user-created classification, currency and integer minor units, plus policy ID/version, policy limits/cap/threshold, synthetic prior spending, decision, reason codes, and event IDs. Exact keys are validated; incompatible, malformed, or audit-invalid files fail closed and are left untouched.
-- Each create/evaluate operation writes the proposal and corresponding event together in one snapshot. Main writes a unique mode-0600 temporary file, flushes it, atomically renames it over the snapshot, and flushes the containing directory. A failure before rename leaves the prior snapshot in place. Stale temporary files are ignored. No automatic repair or destructive reset is performed.
-- Event hashes are SHA-256 over UTF-8 canonical JSON of all event fields except `hash`, with recursively sorted object keys, preserved array order, compact JSON separators, and `previousHash` included. The first event points to 64 zeroes. Verification reports the first malformed event, broken link, or hash mismatch.
-- Hash chaining detects accidental edits and partial/reordered history when checked against the retained chain. It does not stop a machine owner or malicious local process from rewriting the whole file and recomputing hashes; there is no remote anchor, hardware key, encryption-at-rest claim, or independent proof. A valid audit status does not prove approval or a transaction.
-- User-created proposal records are distinct from synthetic dashboard examples and synthetic policy/prior-spending inputs. Audit details exclude free text and secrets. No wallet secrets are accepted or stored.
-- Backups are the user's responsibility. Deleting the user-data file removes local proposal and audit history; there is no recovery service. Schema migration is not implemented: unsupported versions are preserved and reported as incompatible. If directory fsync fails after rename, the complete snapshot may already be visible but durability is uncertain; the UI asks the user to reload before retrying.
-- `npm test` includes restart, concurrent-write, failed-write, tamper, malformed-record, IPC-shape, and sensitive-payload tests using temporary storage.
+**Online wallet demonstration**
 
-## Dependency note
+1. Confirm GNOME Keyring is available; create a dedicated Sepolia demo wallet and securely record its recovery phrase.
+2. Fund it only with Sepolia test ETH from a source you independently verify.
+3. Review recipient, amount, estimated fee, policy result, approval and OS confirmation.
+4. If a transfer is actually made, verify its successful receipt and exact transfer shape through the independent RPC and explorer. Until those checks are recorded, report no completed/verified transfer.
 
-The application pins `@qvac/sdk@0.22.0` and overrides its transitive `zod@4.6.5` pin to patched `4.6.6` (`GHSA-mrhx-c7xc-m3w5`). The app dependency tree reports zero audit findings. The preserved QVAC smoke workspace remains unchanged and reports three high-severity entries through `@qvac/sdk@0.22.0`, `@qvac/inference@0.22.0`, and `zod@4.6.5`. npm suggests SDK 0.21.1, a semver-major change, and that downgrade was not applied.
+**Before claiming a real Sepolia transfer:** perform a user-approved transfer from the dedicated test wallet, preserve the transaction hash, independently verify chain, successful receipt, sender, recipient and exact value, and capture reproducible evidence. No transaction was sent by this alignment work.
+
+Repository: *(add repository URL when publicly available)*
+Demo video: *(add only after a video exists)*

@@ -80,7 +80,7 @@ try {
   if (!(await evaluate("document.querySelector('.app-shell') !== null", sessionId))) throw new Error('ATG React interface did not render');
 
   if (mode === 'policy-demo') {
-    const amount = (value) => evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(document.querySelector('#proposal-amount'), ${JSON.stringify(value)}); document.querySelector('#proposal-amount').dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.policy-demo .ai-button').click()`, sessionId);
+    const amount = (value) => evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(document.querySelector('#proposal-amount'), ${JSON.stringify(value)}); document.querySelector('#proposal-amount').dispatchEvent(new Event('input', { bubbles: true })); Array.from(document.querySelectorAll('.policy-demo .ai-button')).find((button) => button.textContent.includes('Save & evaluate')).click()`, sessionId);
     const outcome = async (value, currency = 'KES') => {
       await amount(value);
       const deadline = Date.now() + 5_000;
@@ -130,9 +130,9 @@ try {
     const backupSession = (await cdp('Target.attachToTarget', { targetId: backupTarget.targetId, flatten: true })).result.sessionId;
     const recoveryDeadline = Date.now() + 5_000;
     let recoveryHeading;
-    while (Date.now() < recoveryDeadline && !recoveryHeading) {
+    while (Date.now() < recoveryDeadline && recoveryHeading !== 'Restore a Sepolia test wallet') {
       recoveryHeading = await evaluate("document.querySelector('h1')?.textContent || null", backupSession);
-      if (!recoveryHeading) await pause(100);
+      if (recoveryHeading !== 'Restore a Sepolia test wallet') await pause(100);
     }
     const recoveryUi = await evaluate("({ heading: document.querySelector('h1')?.textContent, phraseInput: Boolean(document.querySelector('#recovery-phrase')), hasSeedText: /\\b(?:abandon|ability|able|about)\\b/.test(document.body.innerText) })", backupSession);
     console.log('RESTRICTED_RECOVERY_UI', JSON.stringify(recoveryUi));

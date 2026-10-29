@@ -5,6 +5,7 @@ import type { TransferQuote, WalletStatus } from '../../electron/sepolia-wallet'
 import type { TransferRecord } from '../../electron/transfer-store';
 import { CURRENCY_METADATA } from '../../electron/treasury-domain';
 import { SEPOLIA_CHAIN_ID } from '../../electron/sepolia-domain';
+import { compareTreasuryCosts, type ComparedCostQuote } from '../../electron/treasury-cost';
 
 const navigation = [
   { label: 'Overview', icon: '◫', active: true },
@@ -38,6 +39,13 @@ export function App() {
   const [walletError, setWalletError] = useState('');
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletApproved, setWalletApproved] = useState(false);
+  const [referenceRate, setReferenceRate] = useState('130.5');
+  const [costQuotes, setCostQuotes] = useState([
+    { label: 'Example A', sourceAmount: '100', destinationAmount: '12850', sourceFee: '0.5' },
+    { label: 'Example B', sourceAmount: '100', destinationAmount: '12920', sourceFee: '1.2' },
+  ]);
+  const [costResults, setCostResults] = useState<ComparedCostQuote[] | null>(null);
+  const [costError, setCostError] = useState('');
 
   function formatMoney(money: { currency: keyof typeof CURRENCY_METADATA; minorUnits: number }): string {
     const exponent = CURRENCY_METADATA[money.currency].minorUnitExponent;
@@ -169,7 +177,7 @@ export function App() {
             <div className="strip-separator" />
             <div className="strip-item"><span className="strip-icon shield-icon">◇</span><div><span className="strip-label">POLICY ENGINE</span><strong>Deterministic demo policy</strong></div><span className="tag tag-neutral">MILESTONE 3</span></div>
             <div className="strip-separator" />
-            <div className="strip-item"><span className="strip-icon network-icon">⌁</span><div><span className="strip-label">NETWORK</span><strong>Not checked</strong></div><span className="tag tag-neutral">NO DETECTION</span></div>
+            <div className="strip-item"><span className="strip-icon network-icon">⌁</span><div><span className="strip-label">LOCAL AUDIT</span><strong>{auditValid === null ? 'Checking local events' : auditValid ? 'Hash chain verified' : 'Unavailable / invalid'}</strong></div><span className="tag tag-neutral">ON DEVICE</span></div>
           </section>
 
           <section className="panel wallet-panel" aria-labelledby="wallet-heading">
@@ -192,6 +200,21 @@ export function App() {
             </div>}
             {walletError && <p className="ai-error" role="alert">{walletError}</p>}
             <div className="policy-result"><strong>TRANSFER ACTIVITY ({transferRows.length})</strong>{transferRows.length === 0 && <span>No transfer has been proposed.</span>}{transferRows.map((row) => <div key={row.id}><strong>{row.state.toUpperCase()}</strong><span>{weiToEth(row.amountWei)} ETH to {row.recipient} · fee estimate {weiToEth(row.feeWei)} ETH</span>{row.txHash && <><span>Transaction: <code>{row.txHash}</code></span><button onClick={() => void verifyTransfer(row)}>Verify receipt independently</button><button onClick={() => void window.atg.openSepoliaExplorer({ proposalId: row.id })}>Open Sepolia Etherscan</button></>}</div>)}</div>
+          </section>
+
+          <section className="panel policy-demo" aria-labelledby="cost-planner-heading">
+            <div className="panel-heading"><div><div className="section-kicker">TREASURY PLANNING <span /> USER-ENTERED DATA</div><h2 id="cost-planner-heading">Compare stated route costs</h2></div><span className="demo-badge"><span /> ILLUSTRATIVE PLANNER</span></div>
+            <p className="ai-advisory">No quote provider is connected. Enter quotes you have obtained independently; the initial values below are synthetic examples. This planner does not check prices, liquidity, fees, freshness, or executability.</p>
+            <div className="proposal-form"><div className="proposal-input"><label className="ai-label" htmlFor="reference-rate">Reference rate (destination per source unit)</label><input id="reference-rate" inputMode="decimal" value={referenceRate} onChange={(event) => setReferenceRate(event.target.value)} /></div></div>
+            {costQuotes.map((quote, index) => <div className="proposal-form" key={index}>
+              <div className="proposal-input"><label className="ai-label">Quote label</label><input value={quote.label} onChange={(event) => setCostQuotes((all) => all.map((item, i) => i === index ? { ...item, label: event.target.value } : item))} /></div>
+              <div className="proposal-input"><label className="ai-label">Source amount</label><input inputMode="decimal" value={quote.sourceAmount} onChange={(event) => setCostQuotes((all) => all.map((item, i) => i === index ? { ...item, sourceAmount: event.target.value } : item))} /></div>
+              <div className="proposal-input"><label className="ai-label">Net destination amount</label><input inputMode="decimal" value={quote.destinationAmount} onChange={(event) => setCostQuotes((all) => all.map((item, i) => i === index ? { ...item, destinationAmount: event.target.value } : item))} /></div>
+              <div className="proposal-input"><label className="ai-label">Additional fee (source units)</label><input inputMode="decimal" value={quote.sourceFee} onChange={(event) => setCostQuotes((all) => all.map((item, i) => i === index ? { ...item, sourceFee: event.target.value } : item))} /></div>
+            </div>)}
+            <button className="ai-button" onClick={() => { setCostError(''); setCostResults(null); try { setCostResults(compareTreasuryCosts({ sourceAmount: costQuotes[0]!.sourceAmount, referenceRate, quotes: costQuotes })); } catch (reason) { setCostError(reason instanceof Error ? reason.message : 'Quotes could not be compared.'); } }}>Compare entered quotes</button>
+            {costError && <p className="ai-error" role="alert">{costError}</p>}
+            {costResults && <div className="policy-result" aria-live="polite"><strong>Estimated effective cost (destination units)</strong><span>Formula: (source amount + source-denominated fee) × your reference rate − net destination amount.</span><span>Quotes must share one source amount, destination unit, time, and assumptions. Lower estimated cost ranks first; negative values are retained.</span>{costResults.map((quote, i) => <span key={quote.label}>{i + 1}. {quote.label}: {quote.effectiveCostDestination} estimated cost · net {quote.destinationAmount} · fee {quote.sourceFee} source units</span>)}</div>}
           </section>
 
           <section className="section-heading"><div><div className="section-kicker">01 <span /> OVERVIEW</div><h2>Treasury snapshot</h2></div><span className="demo-badge"><span /> SYNTHETIC DEMO VALUES</span></section>
@@ -224,12 +247,12 @@ export function App() {
           <section className="lower-grid">
             <article className="panel policy-panel">
               <div className="panel-heading"><div><div className="section-kicker">02 <span /> GUARDRAILS</div><h2>Budget &amp; policies</h2></div><span className="outline-icon">≋</span></div>
-              <div className="empty-state policy-empty"><div className="empty-illustration policy-illustration"><span className="ring ring-one"/><span className="ring ring-two"/><span className="shield-shape">◇</span><span className="tiny-spark">✳</span></div><div className="empty-title">No policies configured</div><p>Your treasury has no spending limits or approval rules yet. Policy controls will be introduced in a later milestone.</p><span className="soft-label">SETUP NOT AVAILABLE</span></div>
+              <div className="empty-state policy-empty"><div className="empty-illustration policy-illustration"><span className="ring ring-one"/><span className="ring ring-two"/><span className="shield-shape">◇</span><span className="tiny-spark">✳</span></div><div className="empty-title">Example rules only</div><p>A deterministic synthetic KES example policy and a separate Sepolia native ETH test policy are implemented. No business stablecoin policy is configured.</p><span className="soft-label">NO LIVE STABLECOIN POLICY</span></div>
             </article>
 
             <article className="panel actions-panel">
               <div className="panel-heading"><div><div className="section-kicker">03 <span /> REVIEW QUEUE</div><h2>Proposed actions</h2></div><span className="count-pill">0</span></div>
-              <div className="empty-state actions-empty"><div className="empty-illustration actions-illustration"><div className="doc-shape"><i/><i/><i/></div><span className="plus-shape">+</span></div><div className="empty-title">Nothing to review</div><p>Proposals will appear here for your review. No payment actions are available in this foundation.</p><span className="soft-label">NO ACTIONS PROPOSED</span></div>
+              <div className="empty-state actions-empty"><div className="empty-illustration actions-illustration"><div className="doc-shape"><i/><i/><i/></div><span className="plus-shape">+</span></div><div className="empty-title">Review wallet activity above</div><p>The Sepolia test wallet has its own explicit quote, approval, confirmation, and receipt workflow. Local KES proposals are policy evaluations only.</p><span className="soft-label">TESTNET FLOW ONLY</span></div>
             </article>
           </section>
 

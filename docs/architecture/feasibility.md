@@ -1,5 +1,7 @@
 # Milestone 0 — Feasibility
 
+> **Historical discovery record.** Sections labeled “initial M0 snapshot” and “superseded” preserve what was known at that earlier point; they are not current product status. Current application architecture and claims are in [`initial-architecture.md`](initial-architecture.md), current delivery status is in [`../implementation/milestone-plan.md`](../implementation/milestone-plan.md), and the judge-facing summary is in the root README. The alignment pass confirmed that the application has implemented QVAC, policy, local audit, and WDK Sepolia functionality; an actual Sepolia transfer remains unverified.
+
 **Reviewed:** 2026-10-28 (Africa/Nairobi)  
 **Scope:** Discovery and feasibility only. The focused addendum below adds isolated smoke-test workspaces and records measured results; no application has been built and Milestone 1 has not started.
 
@@ -56,6 +58,13 @@ These are planning inputs. Their absence does not prevent the proposed architect
 - WDK [Node.js/Bare quickstart](https://docs.wdk.tether.io/start-building/nodejs-bare-quickstart/), [wallet module overview](https://docs.wdk.tether.io/sdk/wallet-modules/), [standard EVM wallet](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/), [EVM configuration](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/configuration/), and [EVM API reference](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm/api-reference/).
 - npm registry metadata for `@qvac/sdk@0.22.0`, `@tetherto/wdk@1.0.0-beta.22`, and `@tetherto/wdk-wallet-evm@1.0.0-beta.24`; published WDK declaration files were inspected from temporary npm tarballs. No application package was installed.
 - [Meta Llama 3.2 license](https://www.llama.com/llama3_2/license/).
+
+## Alignment follow-up (2026-10-29)
+
+- The current app source confirms QVAC initialization/inference through [`src/electron/qvac-worker.ts`](../../src/electron/qvac-worker.ts), pinned SDK `@qvac/sdk@0.22.0`, and the Qwen3 600M Q4_0 catalog model. Exact revision/checksum, Apache-2.0 model-repository identification, file bytes, and measured inference/memory figures are documented in the root README. Inference quality is weak: it can emit hidden-reasoning markers, ignore constrained response instructions, and make arithmetic errors.
+- The current wallet implementation is native Sepolia ETH only. Earlier exploratory discussion of mock USD₮ is not an implemented or configured token flow. See [`src/electron/sepolia-wallet.ts`](../../src/electron/sepolia-wallet.ts) and [`src/electron/sepolia-domain.ts`](../../src/electron/sepolia-domain.ts). Automated checks do not establish that a real testnet transfer was completed.
+- A focused API review found documented API-key requirements for 0x and Uniswap quote endpoints. There is no configured credential, verified token/chain route, or market-data provider in this repository. The pass therefore added a user-entered, decimal-safe cost comparison planner, not a live quote integration. Its sample rows are labeled synthetic and its calculation is not an executable quote or savings result.
+- Verification during this alignment pass: root `npm audit` found zero vulnerabilities; the Node suite passed 43/43; TypeScript checks and production build passed. The policy demonstration and wallet UI smoke modes passed after their selectors were updated for the new planner. Cached QVAC UI inference completed in 25.2 seconds with the current network available. A true network-isolated Electron UI run could not be repeated on this host: `unshare --net` is denied, and `unshare --user --map-root-user --net` makes Electron refuse to run as root without `--no-sandbox`. Historical isolated-process evidence above remains the offline inference measurement; no new offline UI result is claimed.
 
 ## Focused Milestone 0 feasibility addendum (2026-10-28)
 
