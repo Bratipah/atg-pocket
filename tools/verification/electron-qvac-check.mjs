@@ -5,8 +5,8 @@ import { StringDecoder } from 'node:string_decoder';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const mode = process.argv[2] ?? 'offline-success';
-if (!['offline-success', 'offline-missing', 'policy-demo'].includes(mode)) {
-  throw new Error('Usage: node tools/verification/electron-qvac-check.mjs [offline-success|offline-missing|policy-demo]');
+if (!['offline-success', 'offline-missing', 'policy-demo', 'wallet-ui'].includes(mode)) {
+  throw new Error('Usage: node tools/verification/electron-qvac-check.mjs [offline-success|offline-missing|policy-demo|wallet-ui]');
 }
 
 const child = spawn(path.join(root, 'node_modules/electron/dist/electron'), ['.', '--remote-debugging-pipe'], {
@@ -75,6 +75,9 @@ try {
   const pageDeadline = Date.now() + 10_000;
   while (Date.now() < pageDeadline && await evaluate('location.href', sessionId) !== 'app://atg/index.html') await pause(100);
   if (await evaluate('location.href', sessionId) !== 'app://atg/index.html') throw new Error('ATG renderer did not finish loading');
+  const appDeadline = Date.now() + 15_000;
+  while (Date.now() < appDeadline && !(await evaluate("document.querySelector('.app-shell') !== null", sessionId))) await pause(100);
+  if (!(await evaluate("document.querySelector('.app-shell') !== null", sessionId))) throw new Error('ATG React interface did not render');
 
   if (mode === 'policy-demo') {
     const amount = (value) => evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(document.querySelector('#proposal-amount'), ${JSON.stringify(value)}); document.querySelector('#proposal-amount').dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.policy-demo .ai-button').click()`, sessionId);
@@ -105,7 +108,39 @@ try {
     process.exitCode = 0;
   }
 
-  if (mode !== 'policy-demo') {
+  if (mode === 'wallet-ui') {
+    const uiDeadline = Date.now() + 10_000;
+    let heading = null;
+    while (Date.now() < uiDeadline && !heading) {
+      heading = await evaluate("document.querySelector('.wallet-panel h2')?.textContent || null", sessionId);
+      if (!heading) await pause(100);
+    }
+    const result = await evaluate("({ heading: document.querySelector('.wallet-panel h2')?.textContent, create: Array.from(document.querySelectorAll('.wallet-panel button')).some((button) => button.textContent.includes('Create local Sepolia test wallet')), history: document.querySelector('.wallet-panel .policy-result strong')?.textContent, backupWindowMethodsOnMain: Boolean(window.atg.getPhrase || window.atg.restorePhrase), devtoolsSetting: 'checked from compiled Electron main options' })", sessionId);
+    console.log('WALLET_UI', JSON.stringify(result));
+    if (result.heading !== 'Native Sepolia ETH wallet' || !result.create || result.backupWindowMethodsOnMain) throw new Error('Sepolia wallet UI or renderer secret boundary check failed');
+    await evaluate("Array.from(document.querySelectorAll('.wallet-panel button')).find((button) => button.textContent.includes('Restore from recovery phrase'))?.click()", sessionId);
+    let backupTarget;
+    const backupDeadline = Date.now() + 8_000;
+    while (Date.now() < backupDeadline && !backupTarget) {
+      const targets = (await cdp('Target.getTargets')).result.targetInfos;
+      backupTarget = targets.find((item) => item.type === 'page' && item.url === 'app://atg/wallet-backup.html');
+      if (!backupTarget) await pause(100);
+    }
+    if (!backupTarget) throw new Error('Restricted wallet recovery window did not open');
+    const backupSession = (await cdp('Target.attachToTarget', { targetId: backupTarget.targetId, flatten: true })).result.sessionId;
+    const recoveryDeadline = Date.now() + 5_000;
+    let recoveryHeading;
+    while (Date.now() < recoveryDeadline && !recoveryHeading) {
+      recoveryHeading = await evaluate("document.querySelector('h1')?.textContent || null", backupSession);
+      if (!recoveryHeading) await pause(100);
+    }
+    const recoveryUi = await evaluate("({ heading: document.querySelector('h1')?.textContent, phraseInput: Boolean(document.querySelector('#recovery-phrase')), hasSeedText: /\\b(?:abandon|ability|able|about)\\b/.test(document.body.innerText) })", backupSession);
+    console.log('RESTRICTED_RECOVERY_UI', JSON.stringify(recoveryUi));
+    if (recoveryUi.heading !== 'Restore a Sepolia test wallet' || !recoveryUi.phraseInput || recoveryUi.hasSeedText) throw new Error('Restricted recovery window check failed');
+    process.exitCode = 0;
+  }
+
+  if (mode !== 'policy-demo' && mode !== 'wallet-ui') {
   const starting = Date.now();
   const initializeUi = await evaluate("(() => { const button = Array.from(document.querySelectorAll('button')).find((item) => /Initialize local model|Retry model setup/.test(item.textContent)); const labels = Array.from(document.querySelectorAll('button')).map((item) => item.textContent.trim()); button?.click(); return { button: button?.textContent.trim() || null, labels }; })()", sessionId);
   console.log('INITIALIZE_UI', JSON.stringify(initializeUi));

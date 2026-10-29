@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { AiStatus, ExplanationResponse, ShellStatus } from '../../electron/api';
 import type { PersistedProposal } from '../../electron/treasury-store';
+import type { TransferQuote, WalletStatus } from '../../electron/sepolia-wallet';
+import type { TransferRecord } from '../../electron/transfer-store';
 import { CURRENCY_METADATA } from '../../electron/treasury-domain';
+import { SEPOLIA_CHAIN_ID } from '../../electron/sepolia-domain';
 
 const navigation = [
   { label: 'Overview', icon: '◫', active: true },
@@ -27,6 +30,14 @@ export function App() {
   const [storageState, setStorageState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [auditValid, setAuditValid] = useState<boolean | null>(null);
   const [policyError, setPolicyError] = useState('');
+  const [walletStatus, setWalletStatus] = useState<WalletStatus>({ setup: 'not-created', network: 'not-checked', address: null, balanceWei: null, refreshedAt: null });
+  const [transferRows, setTransferRows] = useState<TransferRecord[]>([]);
+  const [transferRecipient, setTransferRecipient] = useState('');
+  const [transferAmount, setTransferAmount] = useState('0.0001');
+  const [transferQuote, setTransferQuote] = useState<TransferQuote | null>(null);
+  const [walletError, setWalletError] = useState('');
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletApproved, setWalletApproved] = useState(false);
 
   function formatMoney(money: { currency: keyof typeof CURRENCY_METADATA; minorUnits: number }): string {
     const exponent = CURRENCY_METADATA[money.currency].minorUnitExponent;
@@ -41,6 +52,52 @@ export function App() {
       setProposals(records); setAuditValid(audit.verification.valid); setStorageState('ready');
     } catch { setStorageState('error'); setAuditValid(false); }
   }
+  async function refreshWallet() {
+    try { setWalletStatus(await window.atg.getSepoliaWalletStatus()); }
+    catch { setWalletStatus({ setup: 'unavailable', network: 'unavailable', address: null, balanceWei: null, refreshedAt: null, error: 'Wallet status unavailable; check local storage and RPC status.' }); }
+    try { setTransferRows(await window.atg.listSepoliaTransfers()); }
+    catch { setTransferRows([]); setWalletError('Transfer history is invalid or unavailable. It was preserved, and new transfers fail closed.'); }
+  }
+  function weiToEth(value: string | null): string {
+    if (!value || !/^\d+$/.test(value)) return 'Unavailable';
+    const wei = BigInt(value); const whole = wei / 10n ** 18n;
+    const fraction = (wei % (10n ** 18n)).toString().padStart(18, '0').replace(/0+$/, '');
+    return fraction ? `${whole}.${fraction}` : whole.toString();
+  }
+  async function createWallet() {
+    if (!window.confirm('Create a dedicated Sepolia test wallet on this device? No funds will be moved. A separate backup window will show 12 recovery words. You must write them down and confirm before the encrypted wallet is saved and transfers are enabled.')) return;
+    setWalletBusy(true); setWalletError('');
+    try { await window.atg.createSepoliaWallet(); await refreshWallet(); }
+    catch (reason) { setWalletError(reason instanceof Error ? reason.message : 'Wallet setup failed.'); }
+    finally { setWalletBusy(false); }
+  }
+  async function createTransferQuote() {
+    setWalletBusy(true); setWalletError(''); setTransferQuote(null); setWalletApproved(false);
+    try { setTransferQuote(await window.atg.quoteSepoliaTransfer({ recipient: transferRecipient, amount: transferAmount })); }
+    catch (reason) { setWalletError(reason instanceof Error ? reason.message : 'Fee quote or policy check failed.'); }
+    finally { setWalletBusy(false); }
+  }
+  async function approveTransfer() {
+    if (!transferQuote) return;
+    setWalletBusy(true); setWalletError('');
+    try { await window.atg.approveSepoliaTransfer({ proposalId: transferQuote.proposalId }); setWalletApproved(true); await refreshWallet(); }
+    catch (reason) { setWalletError(reason instanceof Error ? reason.message : 'Approval failed.'); }
+    finally { setWalletBusy(false); }
+  }
+  async function confirmTransfer() {
+    if (!transferQuote) return;
+    setWalletBusy(true); setWalletError('');
+    try {
+      const result = await window.atg.confirmSepoliaTransfer({ proposalId: transferQuote.proposalId });
+      if (result.error) setWalletError(result.error);
+      setTransferQuote(null); await refreshWallet();
+    } catch (reason) { setWalletError(reason instanceof Error ? reason.message : 'Transfer status unknown. Check activity before retrying.'); await refreshWallet(); }
+    finally { setWalletBusy(false); }
+  }
+  async function verifyTransfer(row: TransferRecord) {
+    try { await window.atg.verifySepoliaReceipt({ proposalId: row.id }); await refreshWallet(); }
+    catch { setWalletError('Receipt could not be independently verified.'); }
+  }
   async function createProposal() {
     setPolicyError('');
     try {
@@ -52,6 +109,7 @@ export function App() {
   useEffect(() => {
     if (!window.atg) return;
     void refreshProposals();
+    void refreshWallet();
     void window.atg.getShellStatus().then(setStatus).catch(() => setStatus(null));
     void window.atg.getAiStatus().then(setAiStatus).catch(() => setAiStatus({ state: 'failed', message: 'Local model status is unavailable.' }));
   }, []);
@@ -112,6 +170,28 @@ export function App() {
             <div className="strip-item"><span className="strip-icon shield-icon">◇</span><div><span className="strip-label">POLICY ENGINE</span><strong>Deterministic demo policy</strong></div><span className="tag tag-neutral">MILESTONE 3</span></div>
             <div className="strip-separator" />
             <div className="strip-item"><span className="strip-icon network-icon">⌁</span><div><span className="strip-label">NETWORK</span><strong>Not checked</strong></div><span className="tag tag-neutral">NO DETECTION</span></div>
+          </section>
+
+          <section className="panel wallet-panel" aria-labelledby="wallet-heading">
+            <div className="panel-heading"><div><div className="section-kicker">TESTNET ONLY <span /> SEPOLIA · CHAIN 11155111</div><h2 id="wallet-heading">Native Sepolia ETH wallet</h2></div><span className="tag tag-neutral">TEST ETH HAS NO VALUE</span></div>
+            <p className="ai-advisory">A dedicated local test wallet is encrypted with this device’s OS keyring. A separate restricted window displays its recovery words during setup. The backup exists only if you write them down securely. Creating this wallet is a local action; no funds are sent.</p>
+            <div className="policy-facts"><span>Policy hard limit <strong>0.001 ETH</strong></span><span>Approval threshold <strong>0.0005 ETH</strong></span><span>Estimated fee ceiling <strong>0.0001 ETH</strong></span><span>Native Sepolia ETH only · no fiat value</span></div>
+            {walletStatus.setup === 'not-created' && <><button className="ai-button" onClick={() => void createWallet()} disabled={walletBusy}>Create local Sepolia test wallet</button><button className="ai-button secondary" onClick={() => void window.atg.restoreSepoliaWallet().catch((reason) => setWalletError(String(reason)))}>Restore from recovery phrase</button></>}
+            {walletStatus.setup === 'unavailable' && <p role="status">Wallet status unavailable; creation and transfers are disabled until local secret storage can be read.</p>}
+            {walletStatus.setup === 'backup-required' && <button className="ai-button secondary" onClick={() => void window.atg.reopenWalletBackup().catch((reason) => setWalletError(String(reason)))}>Continue wallet backup</button>}
+            {walletStatus.address && <div className="policy-result"><strong>Wallet {walletStatus.setup === 'ready' ? 'ready' : 'backup required'}</strong><span>Public address: <code>{walletStatus.address}</code> <button onClick={() => void navigator.clipboard.writeText(walletStatus.address!)}>Copy</button></span><span>Network: {walletStatus.network === 'verified' ? `Ethereum Sepolia · chain ID ${SEPOLIA_CHAIN_ID} (verified)` : `Identity ${walletStatus.network}; not verified`}</span><span>Balance: {walletStatus.balanceWei === null ? 'Unavailable' : `${weiToEth(walletStatus.balanceWei)} ETH`}{walletStatus.refreshedAt ? ` · refreshed ${new Date(walletStatus.refreshedAt).toLocaleTimeString()}` : ''}</span><button onClick={() => void refreshWallet()}>Refresh balance</button></div>}
+            {walletStatus.setup === 'ready' && walletStatus.network === 'verified' && <div className="proposal-form">
+              <div className="proposal-input"><label className="ai-label" htmlFor="eth-recipient">Recipient address</label><input id="eth-recipient" value={transferRecipient} onChange={(event) => setTransferRecipient(event.target.value)} placeholder="0x…" /></div>
+              <div className="proposal-input"><label className="ai-label" htmlFor="eth-amount">Amount (ETH)</label><input id="eth-amount" inputMode="decimal" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} /></div>
+              <button className="ai-button" onClick={() => void createTransferQuote()} disabled={walletBusy}>Estimate fee &amp; evaluate policy</button>
+            </div>}
+            {transferQuote && <div className="policy-result" aria-live="polite"><strong>Policy: {transferQuote.decision.replace('_', ' ').toUpperCase()}</strong><span>Sepolia · native ETH · recipient {transferQuote.recipient}</span><span>Amount {weiToEth(transferQuote.amountWei)} ETH · maximum fee quote {weiToEth(transferQuote.feeWei)} ETH · total debit ceiling {weiToEth(transferQuote.totalDebitWei)} ETH</span><span>Reason: {transferQuote.reason}</span>
+              {transferQuote.decision === 'require_approval' && !walletApproved && <button disabled={walletBusy} onClick={() => void approveTransfer()}>Approve this transfer</button>}
+              {transferQuote.decision !== 'deny' && (transferQuote.decision === 'allow' || walletApproved) && <button disabled={walletBusy} onClick={() => void confirmTransfer()}>Review &amp; explicitly confirm signing</button>}
+              {transferQuote.decision !== 'deny' && <button disabled={walletBusy} onClick={() => void window.atg.cancelSepoliaTransfer({ proposalId: transferQuote.proposalId }).then(() => { setTransferQuote(null); void refreshWallet(); })}>Cancel</button>}
+            </div>}
+            {walletError && <p className="ai-error" role="alert">{walletError}</p>}
+            <div className="policy-result"><strong>TRANSFER ACTIVITY ({transferRows.length})</strong>{transferRows.length === 0 && <span>No transfer has been proposed.</span>}{transferRows.map((row) => <div key={row.id}><strong>{row.state.toUpperCase()}</strong><span>{weiToEth(row.amountWei)} ETH to {row.recipient} · fee estimate {weiToEth(row.feeWei)} ETH</span>{row.txHash && <><span>Transaction: <code>{row.txHash}</code></span><button onClick={() => void verifyTransfer(row)}>Verify receipt independently</button><button onClick={() => void window.atg.openSepoliaExplorer({ proposalId: row.id })}>Open Sepolia Etherscan</button></>}</div>)}</div>
           </section>
 
           <section className="section-heading"><div><div className="section-kicker">01 <span /> OVERVIEW</div><h2>Treasury snapshot</h2></div><span className="demo-badge"><span /> SYNTHETIC DEMO VALUES</span></section>

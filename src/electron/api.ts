@@ -1,5 +1,7 @@
 import type { PolicyEvaluationResult, PolicyConfiguration, Money } from './treasury-domain.js';
 import type { AuditEvent, AuditVerification, PersistedProposal } from './treasury-store.js';
+import type { TransferQuote, WalletStatus } from './sepolia-wallet.js';
+import type { TransferRecord } from './transfer-store.js';
 
 export interface ShellStatus {
   appVersion: string;
@@ -31,6 +33,17 @@ export interface AtgApi {
   createProposal(input: EvaluateProposalRequest): Promise<CreateProposalResponse>;
   listProposals(): Promise<PersistedProposal[]>;
   getProposalAudit(input?: { proposalId?: string }): Promise<ProposalAuditResponse>;
+  getSepoliaWalletStatus(): Promise<WalletStatus>;
+  createSepoliaWallet(): Promise<{ address: string }>;
+  reopenWalletBackup(): Promise<boolean>;
+  restoreSepoliaWallet(): Promise<boolean>;
+  quoteSepoliaTransfer(input: { recipient: string; amount: string }): Promise<TransferQuote>;
+  approveSepoliaTransfer(input: { proposalId: string }): Promise<TransferRecord>;
+  cancelSepoliaTransfer(input: { proposalId: string }): Promise<TransferRecord>;
+  confirmSepoliaTransfer(input: { proposalId: string }): Promise<{ transfer: TransferRecord; error?: string }>;
+  listSepoliaTransfers(): Promise<TransferRecord[]>;
+  verifySepoliaReceipt(input: { proposalId: string }): Promise<TransferRecord>;
+  openSepoliaExplorer(input: { proposalId: string }): Promise<boolean>;
 }
 
 export const IPC = {
@@ -42,4 +55,14 @@ export const IPC = {
   createProposal: 'treasury:create-proposal',
   listProposals: 'treasury:list-proposals',
   getProposalAudit: 'treasury:get-audit',
+  getSepoliaWalletStatus: 'wallet:get-sepolia-status',
+  createSepoliaWallet: 'wallet:create-sepolia',
+  restoreSepoliaWallet: 'wallet:restore-sepolia',
+  quoteSepoliaTransfer: 'wallet:quote-sepolia-transfer',
+  approveSepoliaTransfer: 'wallet:approve-sepolia-transfer',
+  cancelSepoliaTransfer: 'wallet:cancel-sepolia-transfer',
+  confirmSepoliaTransfer: 'wallet:confirm-sepolia-transfer',
+  listSepoliaTransfers: 'wallet:list-sepolia-transfers',
+  verifySepoliaReceipt: 'wallet:verify-sepolia-receipt',
+  openSepoliaExplorer: 'wallet:open-sepolia-explorer',
 } as const;

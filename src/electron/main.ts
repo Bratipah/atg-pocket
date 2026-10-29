@@ -11,9 +11,13 @@ import { DEMO_POLICY, DEMO_PRIOR_SPENDING, evaluatePolicy, parseMoney } from './
 import type { EvaluateProposalResponse } from './api.js';
 import { TreasuryStore } from './treasury-store.js';
 import type { QvacCommand, QvacResponse } from './qvac-protocol.js';
+import { SepoliaWalletService, publicQuoteDetails } from './sepolia-wallet.js';
+import { TransferStore } from './transfer-store.js';
+import { SEPOLIA_CHAIN_ID } from './sepolia-domain.js';
+import { formatWeiAsEth } from './sepolia-domain.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { app, BrowserWindow, ipcMain, protocol, utilityProcess } = electron;
+const { app, BrowserWindow, ipcMain, protocol, utilityProcess, safeStorage, shell, dialog } = electron;
 const hasSingleInstance = app.requestSingleInstanceLock();
 const rendererDirectory = path.resolve(here, '../renderer');
 const csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -27,6 +31,11 @@ let workerStatus: AiStatus = { state: 'not-initialized', message: 'Model not ini
 type QvacSuccess = Extract<QvacResponse, { ok: true }>;
 const pending = new Map<number, { resolve: (value: QvacSuccess) => void; reject: (error: Error) => void }>();
 let treasuryStore: TreasuryStore;
+let sepoliaWallet: SepoliaWalletService;
+let transferStore: TransferStore;
+let backupWindow: BrowserWindowType | null = null;
+let backupWindowMode: 'backup' | 'recovery' = 'backup';
+const confirmingTransferIds = new Set<string>();
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -123,6 +132,117 @@ function registerIpc(): void {
   ipcMain.handle(IPC.getProposalAudit, (event, rawInput) => {
     assertTrusted(event); const request = validateAuditRequest(rawInput); return treasuryStore.getAudit(request.proposalId);
   });
+  ipcMain.handle(IPC.getSepoliaWalletStatus, async (event) => { assertTrusted(event); return sepoliaWallet.getStatus(); });
+  ipcMain.handle(IPC.createSepoliaWallet, async (event) => {
+    assertTrusted(event);
+    const result = await sepoliaWallet.createWallet();
+    openWalletBackupWindow('backup');
+    return result;
+  });
+  ipcMain.handle(IPC.restoreSepoliaWallet, (event) => { assertTrusted(event); sepoliaWallet.beginRecoveryWindow(); openWalletBackupWindow('recovery'); return true; });
+  ipcMain.handle('wallet:reopen-backup', (event) => { assertTrusted(event); if (!sepoliaWallet.hasPendingBackup()) throw new Error('No unconfirmed backup or recovery is available in this app session.'); openWalletBackupWindow(backupWindowMode); return true; });
+  ipcMain.handle('wallet-backup:get-mode', (event) => { assertBackupWindow(event); return backupWindowMode; });
+  ipcMain.handle('wallet-backup:get-phrase', (event) => { assertBackupWindow(event); return sepoliaWallet.consumeBackupPhrase(); });
+  ipcMain.handle('wallet-backup:restore-phrase', async (event, phrase) => { assertBackupWindow(event); if (backupWindowMode !== 'recovery' || typeof phrase !== 'string' || phrase.length > 300) throw new Error('Invalid recovery request.'); return sepoliaWallet.restoreFromPhrase(phrase); });
+  ipcMain.handle('wallet-backup:confirm-written', async (event) => { assertBackupWindow(event); await sepoliaWallet.confirmBackup(); backupWindow?.close(); return true; });
+  ipcMain.handle(IPC.quoteSepoliaTransfer, async (event, raw) => {
+    assertTrusted(event);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length !== 2 || typeof raw.recipient !== 'string' || typeof raw.amount !== 'string') throw new Error('Invalid transfer proposal.');
+    const quote = await sepoliaWallet.quoteTransfer({ ...raw, chainId: SEPOLIA_CHAIN_ID, asset: 'native-ETH' });
+    try {
+      const record = await transferStore.create({ id: quote.proposalId, chainId: quote.chainId, asset: quote.asset, recipient: quote.recipient, amountWei: quote.amountWei, feeWei: quote.feeWei, decision: quote.decision, reason: quote.reason });
+      return { ...quote, publicDetails: publicQuoteDetails(quote) };
+    } catch (error) { sepoliaWallet.cancelTransfer(quote.proposalId); throw error; }
+  });
+  ipcMain.handle(IPC.approveSepoliaTransfer, async (event, raw) => {
+    assertTrusted(event); const id = validateTransferId(raw);
+    if (confirmingTransferIds.has(id)) throw new Error('Final confirmation is already open for this transfer.');
+    const current = (await transferStore.list()).find((item) => item.id === id);
+    if (!current || current.state !== 'awaiting_approval' || current.decision !== 'require_approval') throw new Error('Transfer is not awaiting policy approval.');
+    sepoliaWallet.approveTransfer(id);
+    return transferStore.update(id, 'ready_to_confirm', { humanApproval: true }, { approved: true });
+  });
+  ipcMain.handle(IPC.cancelSepoliaTransfer, async (event, raw) => {
+    assertTrusted(event); const id = validateTransferId(raw);
+    if (confirmingTransferIds.has(id)) throw new Error('Final confirmation is already open for this transfer.');
+    const current = (await transferStore.list()).find((item) => item.id === id);
+    if (!current || !['awaiting_approval', 'ready_to_confirm'].includes(current.state)) throw new Error('Transfer can no longer be cancelled from its current lifecycle state.');
+    sepoliaWallet.cancelTransfer(id); return transferStore.update(id, 'cancelled', { humanAction: 'cancelled' });
+  });
+  ipcMain.handle(IPC.confirmSepoliaTransfer, async (event, raw) => {
+    assertTrusted(event); const id = validateTransferId(raw);
+    if (confirmingTransferIds.has(id)) throw new Error('This transfer already has a confirmation dialog open.');
+    const current = (await transferStore.list()).find((item) => item.id === id);
+    if (!current || current.state !== 'ready_to_confirm' || current.confirmed || current.decision === 'require_approval' && !current.approved) throw new Error('Transfer is not approved and ready for explicit confirmation.');
+    if (!trustedWindow || trustedWindow.isDestroyed()) throw new Error('The trusted confirmation window is unavailable.');
+    confirmingTransferIds.add(id);
+    try {
+    const confirmation = await dialog.showMessageBox(trustedWindow, {
+      type: 'warning', title: 'Confirm Sepolia test transfer',
+      message: 'Review this exact transfer before signing and broadcasting.',
+      detail: `Network: Ethereum Sepolia (chain ID ${current.chainId})\nAsset: native test ETH\nRecipient: ${current.recipient}\nAmount: ${formatWeiAsEth(BigInt(current.amountWei))} ETH\nMaximum fee quote: ${formatWeiAsEth(BigInt(current.feeWei))} ETH\nTotal debit ceiling: ${formatWeiAsEth(BigInt(current.amountWei) + BigInt(current.feeWei))} ETH\n\nSepolia ETH has no real-world value. This action will broadcast a public testnet transaction.`,
+      buttons: ['Cancel', 'Sign and broadcast'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (confirmation.response !== 1) {
+      sepoliaWallet.cancelTransfer(id);
+      return { transfer: await transferStore.update(id, 'cancelled', { humanAction: 'confirmation_cancelled' }) };
+    }
+    const rechecked = (await transferStore.list()).find((item) => item.id === id);
+    if (!rechecked || rechecked.state !== 'ready_to_confirm' || rechecked.confirmed || rechecked.decision === 'require_approval' && !rechecked.approved) throw new Error('Transfer changed while confirmation was open; review a fresh proposal.');
+    await transferStore.update(id, 'ready_to_confirm', { humanAction: 'explicit_confirmation' }, { confirmed: true });
+    try {
+      await sepoliaWallet.submitTransfer(id, async (state, details = {}) => {
+        const txHash = typeof details.txHash === 'string' ? details.txHash : undefined;
+        if (state === 'broadcast_attempt') { await transferStore.recordEvent(id, 'broadcast.attempt', {}); return; }
+        await transferStore.update(id, state as any, details, txHash ? { txHash } : {});
+      });
+    } catch {
+      let transfer = (await transferStore.list()).find((item) => item.id === id)!;
+      if (transfer.state === 'ready_to_confirm') transfer = await transferStore.update(id, 'failed', { reason: 'final_revalidation_or_signing_failed' });
+      return { transfer, error: 'Signing or submission failed. Check this lifecycle record before retrying.' };
+    }
+    return { transfer: (await transferStore.list()).find((item) => item.id === id)! };
+    } finally { confirmingTransferIds.delete(id); }
+  });
+  ipcMain.handle(IPC.listSepoliaTransfers, (event) => { assertTrusted(event); return transferStore.list(); });
+  ipcMain.handle(IPC.verifySepoliaReceipt, async (event, raw) => {
+    assertTrusted(event); const id = validateTransferId(raw);
+    const current = (await transferStore.list()).find((item) => item.id === id);
+    if (!current?.txHash) throw new Error('No real transaction hash is available to verify.');
+    const receipt = await sepoliaWallet.verifyReceipt(current.txHash);
+    const wallet = await sepoliaWallet.getStatus();
+    const matchesProposal = Boolean(wallet.address && receipt.from?.toLowerCase() === wallet.address.toLowerCase() && receipt.recipient?.toLowerCase() === current.recipient.toLowerCase() && receipt.valueWei === current.amountWei);
+    const observed = receipt.status === 'confirmed' && !matchesProposal ? 'unknown' : receipt.status;
+    return transferStore.update(id, observed === 'confirmed' ? 'confirmed' : observed === 'failed' ? 'failed' : observed === 'pending' ? 'broadcast' : 'unknown', { receiptStatus: observed, detailMatch: matchesProposal, independentRpc: 'public.1rpc.io/sepolia', ...(receipt.blockNumber ? { blockNumber: receipt.blockNumber } : {}) }, { receiptStatus: observed });
+  });
+  ipcMain.handle(IPC.openSepoliaExplorer, async (event, raw) => {
+    assertTrusted(event); const id = validateTransferId(raw);
+    const current = (await transferStore.list()).find((item) => item.id === id);
+    if (!current?.txHash || !/^0x[0-9a-fA-F]{64}$/.test(current.txHash)) throw new Error('No real transaction hash is available.');
+    await shell.openExternal(`https://sepolia.etherscan.io/tx/${current.txHash}`); return true;
+  });
+}
+
+function validateTransferId(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length !== 1 || typeof (raw as any).proposalId !== 'string' || !/^[0-9a-f-]{36}$/i.test((raw as any).proposalId)) throw new Error('Invalid transfer request.');
+  return (raw as any).proposalId;
+}
+
+function assertBackupWindow(event: IpcMainInvokeEvent): void {
+  const frame = event.senderFrame;
+  if (!backupWindow || backupWindow.isDestroyed() || event.sender.id !== backupWindow.webContents.id || !frame || event.sender.mainFrame !== frame || frame.url !== 'app://atg/wallet-backup.html') throw new Error('Untrusted wallet backup window.');
+}
+
+function openWalletBackupWindow(mode: 'backup' | 'recovery'): void {
+  if (backupWindow && !backupWindow.isDestroyed()) { backupWindow.focus(); return; }
+  backupWindowMode = mode;
+  if (mode === 'backup') sepoliaWallet.beginBackupWindow();
+  const window = new BrowserWindow({ width: 760, height: 760, ...(trustedWindow ? { parent: trustedWindow, modal: true } : {}), show: false, title: 'Wallet backup — ATG Pocket', autoHideMenuBar: true, webPreferences: { preload: path.join(here, 'wallet-backup-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, webviewTag: false, devTools: false } });
+  backupWindow = window;
+  window.webContents.on('will-navigate', (event, url) => { if (url !== 'app://atg/wallet-backup.html') event.preventDefault(); });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.on('closed', () => { if (backupWindow === window) backupWindow = null; });
+  void window.loadURL('app://atg/wallet-backup.html').then(() => window.show());
 }
 
 function assertTrusted(event: IpcMainInvokeEvent): void {
@@ -242,7 +362,7 @@ async function createWindow(): Promise<void> {
   trustedWindow = window;
 
   window.webContents.on('will-navigate', (event, targetUrl) => {
-    if (!targetUrl.startsWith('app://atg/')) event.preventDefault();
+    if (targetUrl !== 'app://atg/index.html') event.preventDefault();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.on('closed', () => {
@@ -255,6 +375,10 @@ if (!hasSingleInstance) {
   app.quit();
 } else app.whenReady().then(async () => {
   treasuryStore = new TreasuryStore(path.join(app.getPath('userData'), 'treasury-v1.json'));
+  sepoliaWallet = new SepoliaWalletService(path.join(app.getPath('userData'), 'sepolia-wallet-v1.enc'), safeStorage);
+  transferStore = new TransferStore(path.join(app.getPath('userData'), 'sepolia-transfers-v1.json'));
+  try { await transferStore.recoverAfterRestart(); }
+  catch { /* Keep the desktop available; TransferStore remains fail-closed on every subsequent read/write. */ }
   await registerAppProtocol();
   registerIpc();
   await createWindow();

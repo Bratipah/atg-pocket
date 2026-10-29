@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@qvac/sdk": "0.22.0",
+    "@tetherto/wdk": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
+    "ethers": "6.17.0",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -31,6 +34,7 @@
     "esbuild@0.25.12": true
   },
   "overrides": {
+    "@tetherto/wdk-wallet": "1.0.0-beta.21",
     "zod": "4.6.6"
   }
 }
