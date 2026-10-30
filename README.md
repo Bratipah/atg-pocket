@@ -116,6 +116,8 @@ Roadmap: establish asset and jurisdiction requirements; identify permitted quote
 
 ## Demo and submission checklist
 
+Judges can follow the step-by-step [offline run and demo guide](docs/submission/offline-judge-guide.md).
+
 **Offline demonstration**
 
 1. Install dependencies and run `npm run dev:electron` while online.
