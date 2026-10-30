@@ -13,8 +13,7 @@ import { TreasuryStore } from './treasury-store.js';
 import type { QvacCommand, QvacResponse } from './qvac-protocol.js';
 import { SepoliaWalletService, publicQuoteDetails } from './sepolia-wallet.js';
 import { TransferStore } from './transfer-store.js';
-import { SEPOLIA_CHAIN_ID } from './sepolia-domain.js';
-import { formatWeiAsEth } from './sepolia-domain.js';
+import { formatTestUsdt, formatWeiAsEth, SEPOLIA_CHAIN_ID, TEST_USDT_ADDRESS } from './sepolia-domain.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { app, BrowserWindow, ipcMain, protocol, utilityProcess, safeStorage, shell, dialog } = electron;
@@ -148,9 +147,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.quoteSepoliaTransfer, async (event, raw) => {
     assertTrusted(event);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length !== 2 || typeof raw.recipient !== 'string' || typeof raw.amount !== 'string') throw new Error('Invalid transfer proposal.');
-    const quote = await sepoliaWallet.quoteTransfer({ ...raw, chainId: SEPOLIA_CHAIN_ID, asset: 'native-ETH' });
+    const quote = await sepoliaWallet.quoteTransfer({ ...raw, chainId: SEPOLIA_CHAIN_ID, asset: 'sepolia-test-USDt' });
     try {
-      const record = await transferStore.create({ id: quote.proposalId, chainId: quote.chainId, asset: quote.asset, recipient: quote.recipient, amountWei: quote.amountWei, feeWei: quote.feeWei, decision: quote.decision, reason: quote.reason });
+      await transferStore.create({ id: quote.proposalId, chainId: quote.chainId, asset: quote.asset, tokenAddress: quote.tokenAddress, recipient: quote.recipient, amountBaseUnits: quote.amountBaseUnits, feeWei: quote.feeWei, decision: quote.decision, reason: quote.reason });
       return { ...quote, publicDetails: publicQuoteDetails(quote) };
     } catch (error) { sepoliaWallet.cancelTransfer(quote.proposalId); throw error; }
   });
@@ -173,14 +172,14 @@ function registerIpc(): void {
     assertTrusted(event); const id = validateTransferId(raw);
     if (confirmingTransferIds.has(id)) throw new Error('This transfer already has a confirmation dialog open.');
     const current = (await transferStore.list()).find((item) => item.id === id);
-    if (!current || current.state !== 'ready_to_confirm' || current.confirmed || current.decision === 'require_approval' && !current.approved) throw new Error('Transfer is not approved and ready for explicit confirmation.');
+    if (!current || current.asset !== 'sepolia-test-USDt' || current.state !== 'ready_to_confirm' || current.confirmed || current.decision === 'require_approval' && !current.approved) throw new Error('Transfer is not an approved test USD₮ proposal ready for explicit confirmation.');
     if (!trustedWindow || trustedWindow.isDestroyed()) throw new Error('The trusted confirmation window is unavailable.');
     confirmingTransferIds.add(id);
     try {
     const confirmation = await dialog.showMessageBox(trustedWindow, {
       type: 'warning', title: 'Confirm Sepolia test transfer',
       message: 'Review this exact transfer before signing and broadcasting.',
-      detail: `Network: Ethereum Sepolia (chain ID ${current.chainId})\nAsset: native test ETH\nRecipient: ${current.recipient}\nAmount: ${formatWeiAsEth(BigInt(current.amountWei))} ETH\nMaximum fee quote: ${formatWeiAsEth(BigInt(current.feeWei))} ETH\nTotal debit ceiling: ${formatWeiAsEth(BigInt(current.amountWei) + BigInt(current.feeWei))} ETH\n\nSepolia ETH has no real-world value. This action will broadcast a public testnet transaction.`,
+      detail: `Network: Ethereum Sepolia (chain ID ${current.chainId})\nAsset: Sepolia test USD₮ (${current.tokenAddress ?? TEST_USDT_ADDRESS})\nRecipient: ${current.recipient}\nAmount: ${formatTestUsdt(BigInt(current.amountBaseUnits ?? '0'))} test USD₮\nEstimated gas fee: ${formatWeiAsEth(BigInt(current.feeWei))} Sepolia ETH\n\nThis mock test token is not redeemable Tether USDT and has no real-world value. Sepolia ETH is still required for gas. This action will broadcast a public testnet transaction.`,
       buttons: ['Cancel', 'Sign and broadcast'], defaultId: 0, cancelId: 0, noLink: true,
     });
     if (confirmation.response !== 1) {
@@ -209,9 +208,10 @@ function registerIpc(): void {
     assertTrusted(event); const id = validateTransferId(raw);
     const current = (await transferStore.list()).find((item) => item.id === id);
     if (!current?.txHash) throw new Error('No real transaction hash is available to verify.');
+    if (current.asset !== 'sepolia-test-USDt') throw new Error('This legacy native ETH activity cannot be verified by the test USD₮ receipt checker.');
     const receipt = await sepoliaWallet.verifyReceipt(current.txHash);
     const wallet = await sepoliaWallet.getStatus();
-    const matchesProposal = Boolean(wallet.address && receipt.from?.toLowerCase() === wallet.address.toLowerCase() && receipt.recipient?.toLowerCase() === current.recipient.toLowerCase() && receipt.valueWei === current.amountWei);
+    const matchesProposal = Boolean(wallet.address && current.asset === 'sepolia-test-USDt' && current.tokenAddress === receipt.tokenAddress && receipt.from?.toLowerCase() === wallet.address.toLowerCase() && receipt.recipient?.toLowerCase() === current.recipient.toLowerCase() && receipt.amountBaseUnits === current.amountBaseUnits);
     const observed = receipt.status === 'confirmed' && !matchesProposal ? 'unknown' : receipt.status;
     return transferStore.update(id, observed === 'confirmed' ? 'confirmed' : observed === 'failed' ? 'failed' : observed === 'pending' ? 'broadcast' : 'unknown', { receiptStatus: observed, detailMatch: matchesProposal, independentRpc: 'public.1rpc.io/sepolia', ...(receipt.blockNumber ? { blockNumber: receipt.blockNumber } : {}) }, { receiptStatus: observed });
   });

@@ -4,7 +4,7 @@
 
 ATG Pocket is a self-custodial treasury assistant prototype for small businesses. It explores how businesses can understand treasury decisions, compare cross-border payment costs, and avoid unnecessary conversion and transfer fees while keeping sensitive context local.
 
-The current prototype is deliberately narrower than that vision: it provides a synthetic KES policy example, locally persisted proposals and audit events, a QVAC-powered advisory copilot, and a separate native ETH wallet workflow on Ethereum Sepolia. It does not hold or settle business KES, USDT, or USDC. Sepolia ETH is valueless testnet currency. No live stablecoin liquidity, swaps, FX savings, production settlement, or cross-chain routing are implemented.
+The current prototype is deliberately narrower than that vision: it provides a synthetic KES policy example, locally persisted proposals and audit events, a QVAC-powered advisory copilot, and a separate Sepolia test USD₮ ERC-20 wallet workflow. It does not hold or settle business KES, USDT, or USDC. The Sepolia mock USD₮ and Sepolia ETH gas currency are valueless testnet assets. No live stablecoin liquidity, swaps, FX savings, production settlement, or cross-chain routing are implemented.
 
 ## Feature status
 
@@ -13,7 +13,7 @@ The current prototype is deliberately narrower than that vision: it provides a s
 | Implemented and tested | QVAC local explanation in an Electron utility process | Offline cache reuse demonstrated; output is advisory and can be slow or wrong. |
 | Implemented and tested | Deterministic synthetic KES proposal policy | Integer minor units, fail-closed checks; no conversion or settlement. |
 | Implemented and tested | Local proposal persistence and SHA-256 hash-chained audit verification | Local tamper evidence only, not a remote audit anchor. |
-| Implemented and tested | Separate Sepolia native ETH policy and WDK workflow | Automated policy, lifecycle, security-boundary and storage checks exist. |
+| Implemented and tested | Separate Sepolia test USD₮ policy and WDK ERC-20 workflow | Automated policy, lifecycle, security-boundary and storage checks exist. |
 | Implemented and tested | Treasury cost-comparison planner | Uses only explicit user-entered data; default values are synthetic examples, never market quotes. |
 | Implemented; real transaction not demonstrated | Sepolia wallet creation/recovery, quote, approval, OS confirmation, signing/broadcast lifecycle and independent receipt lookup | Automated checks are not a real transfer. **A real Sepolia transfer has not been completed and independently verified.** |
 | Planned / unsupported | USDT/USDC market quotes, liquidity, swaps, FX routing, KES settlement, mainnet or production treasury execution | No provider, contracts, route, or production controls are configured. |
@@ -28,7 +28,7 @@ flowchart LR
   Main --> Policy[Deterministic policies]
   Main --> Store[Local proposal store<br/>hash-chained events]
   Main --> AI[QVAC utility process<br/>Qwen3 local model]
-  Main --> Wallet[WDK wallet service<br/>Sepolia native ETH]
+  Main --> Wallet[WDK wallet service<br/>Sepolia test USD₮ + ETH gas]
   Wallet --> RPC[Sepolia RPC]
   Wallet --> Verify[Independent receipt RPC]
 ```
@@ -46,11 +46,11 @@ The local audit chain detects changes to retained history, but an owner of the m
 
 ### Wallet and transfer boundary
 
-The wallet workflow supports **only native ETH on Ethereum Sepolia (chain ID 11155111)**. It uses `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24`, an explicit compatibility override for `@tetherto/wdk-wallet@1.0.0-beta.21`, and ethers 6.17.0. Core implementation: [`sepolia-wallet.ts`](src/electron/sepolia-wallet.ts), [`sepolia-domain.ts`](src/electron/sepolia-domain.ts), and [`transfer-store.ts`](src/electron/transfer-store.ts). See [official WDK documentation](https://docs.wdk.tether.io/).
+New transfers use **Sepolia mock USD₮ (ERC-20) on Ethereum Sepolia (chain ID 11155111)** at `0xd077A400968890Eacc75cdc901F0356c943e4fDb` (6 decimals), with native Sepolia ETH required for gas. The app checks the on-chain contract name, symbol, decimals and code before enabling token transfers. This is a test token, not redeemable Tether USDT; see the [WDK testnet token guidance](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm-erc-4337/configuration/) and [Candide Sepolia token list](https://docs.candide.dev/wallet/paymaster/tokens-supported/). It uses `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24`, an explicit compatibility override for `@tetherto/wdk-wallet@1.0.0-beta.21`, and ethers 6.17.0. Core implementation: [`sepolia-wallet.ts`](src/electron/sepolia-wallet.ts), [`sepolia-domain.ts`](src/electron/sepolia-domain.ts), and [`transfer-store.ts`](src/electron/transfer-store.ts). See [official WDK documentation](https://docs.wdk.tether.io/).
 
 The WDK service runs in Electron main. On Linux, setup requires GNOME Keyring (`gnome_libsecret`) and Electron async `safeStorage`; the 12-word recovery phrase is shown once in a separate restricted window. Only OS-encrypted phrase ciphertext is persisted. Decrypted seed material exists transiently in main-process memory and JavaScript strings cannot be reliably erased. Keep a separate demo wallet; loss of both device and phrase has no recovery path.
 
-The synthetic KES policy and exact-wei Sepolia ETH test policy are separate. A Sepolia proposal receives fresh chain, balance and fee checks; eligible transfers need explicit approval when policy says so and a second OS confirmation. The service signs/broadcasts through WDK, records lifecycle states, treats ambiguous broadcast as unknown without retry, and checks a second RPC for receipt and native-transfer shape. Broadcast is not confirmation. The repository has **no independently verified real transfer**.
+The synthetic KES policy and Sepolia test USD₮ policy are separate. A proposal receives fresh chain, token contract, token balance, native gas balance and fee checks; larger test-token transfers need explicit approval and a second OS confirmation. WDK quotes and submits the ERC-20 transfer; ambiguous submission is recorded as unknown without retry. A second RPC checks the ERC-20 calldata and matching Transfer event before confirmation. Broadcast is not confirmation. Existing native ETH activity records remain readable. The repository has **no independently verified real transfer**.
 
 ## Treasury cost planning
 
@@ -106,11 +106,11 @@ The root application dependency tree returned **zero findings** from `npm audit`
 
 ## What the team built and reused
 
-Implemented in ATG Pocket: Electron security and IPC boundaries, QVAC adapter and advisory UI, deterministic KES example and Sepolia ETH policies, local proposal/audit persistence, wallet onboarding/backup boundary, transfer lifecycle and second-RPC receipt verification, and entered-quote comparison planner. Reused third-party dependencies include Electron, React, TypeScript, QVAC SDK/model, WDK, ethers and supporting packages. The pretrained Qwen3 model and vendor SDKs were not created by this team. The isolated QVAC and WDK feasibility harnesses were retained and informed the implementation. No external market-data provider is connected.
+Implemented in ATG Pocket: Electron security and IPC boundaries, QVAC adapter and advisory UI, deterministic KES example and Sepolia test USD₮ policy, local proposal/audit persistence, wallet onboarding/backup boundary, transfer lifecycle and second-RPC receipt verification, and entered-quote comparison planner. Reused third-party dependencies include Electron, React, TypeScript, QVAC SDK/model, WDK, ethers and supporting packages. The pretrained Qwen3 model and vendor SDKs were not created by this team. The isolated QVAC and WDK feasibility harnesses were retained and informed the implementation. No external market-data provider is connected.
 
 ## Limitations and roadmap
 
-Current demo policies and dashboard figures are synthetic. Sepolia ETH is test-only and does not represent stablecoin treasury value. Local audit chaining is not tamper-proof against a machine owner. Local records have no remote backup; wallet recovery depends on the user’s phrase. Wallet network actions rely on public RPCs and GNOME Keyring. No live stablecoin settlement, production safeguards, quote provider, FX engine, liquidity route, swap, bridge, or mainnet support exists.
+Current demo policies and dashboard figures are synthetic. Sepolia mock USD₮ and ETH are test-only and do not represent treasury value. Local audit chaining is not tamper-proof against a machine owner. Local records have no remote backup; wallet recovery depends on the user’s phrase. Wallet network actions rely on public RPCs and GNOME Keyring. No live stablecoin settlement, production safeguards, quote provider, FX engine, liquidity route, swap, bridge, or mainnet support exists.
 
 Roadmap: establish asset and jurisdiction requirements; identify permitted quote providers and verified supported networks/contracts; compare indicative and executable quotes against a same-time, same-amount baseline with full spread, provider, network and transfer costs; add freshness and provenance controls; independently validate a test flow; only then consider any production scope.
 
@@ -129,11 +129,11 @@ Judges can follow the step-by-step [offline run and demo guide](docs/submission/
 **Online wallet demonstration**
 
 1. Confirm GNOME Keyring is available; create a dedicated Sepolia demo wallet and securely record its recovery phrase.
-2. Fund it only with Sepolia test ETH from a source you independently verify.
-3. Review recipient, amount, estimated fee, policy result, approval and OS confirmation.
+2. Obtain mock USD₮ from a Sepolia faucet listed by WDK/Candide and fund the same wallet with Sepolia test ETH for gas. Verify token address `0xd077A400968890Eacc75cdc901F0356c943e4fDb` (6 decimals).
+3. Review recipient, test USD₮ amount, estimated ETH gas fee, policy result, approval and OS confirmation.
 4. If a transfer is actually made, verify its successful receipt and exact transfer shape through the independent RPC and explorer. Until those checks are recorded, report no completed/verified transfer.
 
-**Before claiming a real Sepolia transfer:** perform a user-approved transfer from the dedicated test wallet, preserve the transaction hash, independently verify chain, successful receipt, sender, recipient and exact value, and capture reproducible evidence. No transaction was sent by this alignment work.
+**Before claiming a real Sepolia transfer:** perform a user-approved transfer from the dedicated test wallet, preserve the transaction hash, independently verify chain, successful receipt, sender, recipient, token contract, exact USD₮ amount and Transfer event, and capture reproducible evidence. No transaction was sent by this alignment work.
 
 Repository: *(add repository URL when publicly available)*
 Demo video: *(add only after a video exists)*

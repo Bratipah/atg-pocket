@@ -1,21 +1,17 @@
 import WDK from '@tetherto/wdk';
 import WalletManagerEvm from '@tetherto/wdk-wallet-evm';
-import { JsonRpcProvider } from 'ethers';
 import type { SafeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  evaluateSepoliaEthTransfer, formatWeiAsEth, parseEthToWei, SEPOLIA_CHAIN_ID,
-  SEPOLIA_ETH_POLICY, SEPOLIA_RPC_URL, SEPOLIA_VERIFICATION_RPC_URL, validateEvmAddress,
-} from './sepolia-domain.js';
+import { decodeTestUsdtTransfer, ERC20_INTERFACE, evaluateSepoliaTestUsdtTransfer, formatTestUsdt, formatWeiAsEth, parseTestUsdt, SEPOLIA_CHAIN_ID, SEPOLIA_RPC_URL, SEPOLIA_TEST_USDT_POLICY, SEPOLIA_VERIFICATION_RPC_URL, TEST_USDT_ADDRESS, TEST_USDT_DECIMALS, TEST_USDT_NAME, TEST_USDT_SYMBOL, validateEvmAddress } from './sepolia-domain.js';
 
 const WALLET_ID = 'atg-sepolia-only';
 interface VaultRecord { schemaVersion: 1; encryptedSeed: string; backupConfirmed: boolean }
-export interface WalletStatus { setup: 'not-created' | 'backup-required' | 'ready' | 'unavailable'; network: 'verified' | 'unavailable' | 'unsupported' | 'not-checked'; address: string | null; balanceWei: string | null; refreshedAt: string | null; error?: string }
+export interface WalletStatus { setup: 'not-created' | 'backup-required' | 'ready' | 'unavailable'; network: 'verified' | 'unavailable' | 'unsupported' | 'not-checked'; address: string | null; balanceWei: string | null; testUsdtBalanceBaseUnits: string | null; testUsdtVerified: boolean; refreshedAt: string | null; error?: string }
 export interface TransferQuote {
-  proposalId: string; chainId: number; asset: 'native-ETH'; recipient: string; amountWei: string;
-  feeWei: string; totalDebitWei: string; gasLimit: string; maxFeePerGas: string; maxPriorityFeePerGas: string | null; decision: 'allow' | 'require_approval' | 'deny'; reason: string;
+  proposalId: string; chainId: number; asset: 'sepolia-test-USDt'; tokenAddress: string; recipient: string; amountBaseUnits: string;
+  feeWei: string; decision: 'allow' | 'require_approval' | 'deny'; reason: string;
 }
 
 export class SepoliaWalletService {
@@ -34,19 +30,24 @@ export class SepoliaWalletService {
 
   async getStatus(): Promise<WalletStatus> {
     const record = await this.loadVault();
-    if (!record && this.pendingVault) return { setup: 'backup-required', network: 'not-checked', address: this.pendingAddress, balanceWei: null, refreshedAt: null };
-    if (!record) return { setup: 'not-created', network: 'not-checked', address: null, balanceWei: null, refreshedAt: null };
+    if (!record && this.pendingVault) return { setup: 'backup-required', network: 'not-checked', address: this.pendingAddress, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, refreshedAt: null };
+    if (!record) return { setup: 'not-created', network: 'not-checked', address: null, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, refreshedAt: null };
     const address = await this.withAccount(record, async (account, wdk) => {
       try {
         const walletAddress = await account.getAddress();
         try {
           const [chainId, balance] = await Promise.all([this.rpc('eth_chainId', []), account.getBalance()]);
-          if (Number(BigInt(chainId)) !== SEPOLIA_CHAIN_ID) return { address: walletAddress, balanceWei: null, network: 'unsupported' as const, error: 'RPC chain ID does not match Sepolia.' };
-          return { address: walletAddress, balanceWei: balance.toString(), network: 'verified' as const };
-        } catch { return { address: walletAddress, balanceWei: null, network: 'unavailable' as const, error: 'Sepolia RPC is unavailable; balance was not refreshed.' }; }
+          if (Number(BigInt(chainId)) !== SEPOLIA_CHAIN_ID) return { address: walletAddress, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, network: 'unsupported' as const, error: 'RPC chain ID does not match Sepolia.' };
+          const verified = await this.verifyTokenContract();
+          let tokenBalanceBaseUnits: string | null = null;
+          if (verified) {
+            try { tokenBalanceBaseUnits = BigInt(await account.getTokenBalance(TEST_USDT_ADDRESS)).toString(); } catch { /* Gas balance remains useful; transfers remain disabled until token balance is available. */ }
+          }
+          return { address: walletAddress, balanceWei: balance.toString(), testUsdtBalanceBaseUnits: tokenBalanceBaseUnits, testUsdtVerified: verified && tokenBalanceBaseUnits !== null, network: 'verified' as const, ...(!(verified && tokenBalanceBaseUnits !== null) ? { error: 'Test USD₮ contract or balance could not be verified; token transfers are disabled.' } : {}) };
+        } catch { return { address: walletAddress, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, network: 'unavailable' as const, error: 'Sepolia RPC is unavailable; balances were not refreshed.' }; }
       } finally { wdk.dispose(); }
     });
-    return { setup: record.backupConfirmed ? 'ready' : 'backup-required', network: address.network, address: address.address, balanceWei: address.balanceWei, refreshedAt: address.balanceWei === null ? null : new Date().toISOString(), ...('error' in address ? { error: address.error } : {}) };
+    return { setup: record.backupConfirmed ? 'ready' : 'backup-required', network: address.network, address: address.address, balanceWei: address.balanceWei, testUsdtBalanceBaseUnits: address.testUsdtBalanceBaseUnits, testUsdtVerified: address.testUsdtVerified, refreshedAt: address.balanceWei === null ? null : new Date().toISOString(), ...('error' in address ? { error: address.error } : {}) };
   }
 
   async createWallet(): Promise<{ address: string }> {
@@ -129,19 +130,20 @@ export class SepoliaWalletService {
     if (this.inFlight) throw new Error('A wallet signing or broadcast operation is already in progress.');
     const record = await this.requireReadyVault();
     const recipient = validateEvmAddress(raw.recipient);
-    const amountWei = parseEthToWei(raw.amount);
-    if (raw.chainId !== SEPOLIA_CHAIN_ID || raw.asset !== 'native-ETH') throw new Error('Only native ETH on Sepolia is supported.');
+    const amountBaseUnits = parseTestUsdt(raw.amount);
+    if (raw.chainId !== SEPOLIA_CHAIN_ID || raw.asset !== 'sepolia-test-USDt') throw new Error('Only Sepolia test USD₮ transfers are supported.');
     const quote = await this.withAccount(record, async (account, wdk) => {
       try {
         const actualChain = Number(BigInt(await this.rpc('eth_chainId', [])));
-        if (actualChain !== SEPOLIA_CHAIN_ID) throw new Error('Connected RPC reported an unsupported chain.');
-        const transaction = await this.buildTransaction(recipient, amountWei, await account.getAddress());
-        const estimate = await account.quoteSendTransaction(transaction);
+        if (actualChain !== SEPOLIA_CHAIN_ID || !(await this.verifyTokenContract())) throw new Error('Sepolia test USD₮ contract verification failed.');
+        const tokenBalance = BigInt(await account.getTokenBalance(TEST_USDT_ADDRESS));
+        if (amountBaseUnits > tokenBalance) throw new Error('Test USD₮ balance does not cover this transfer.');
+        const estimate = await account.quoteTransfer({ token: TEST_USDT_ADDRESS, recipient, amount: amountBaseUnits });
         const feeWei = BigInt(estimate.fee);
-        const balance = await account.getBalance();
-        if (amountWei + feeWei > balance) throw new Error('Wallet balance does not cover the amount and estimated fee.');
-        const decision = evaluateSepoliaEthTransfer({ chainId: actualChain, asset: 'native-ETH', amountWei, feeWei, policy: SEPOLIA_ETH_POLICY });
-        return { proposalId: randomUUID(), chainId: actualChain, asset: 'native-ETH' as const, recipient, amountWei: amountWei.toString(), feeWei: feeWei.toString(), totalDebitWei: (amountWei + feeWei).toString(), gasLimit: String(transaction.gasLimit), maxFeePerGas: String(transaction.maxFeePerGas ?? transaction.gasPrice), maxPriorityFeePerGas: transaction.maxPriorityFeePerGas == null ? null : String(transaction.maxPriorityFeePerGas), decision: decision.outcome, reason: decision.reason };
+        const gasBalance = BigInt(await account.getBalance());
+        if (feeWei > gasBalance) throw new Error('Sepolia ETH balance does not cover the estimated network fee.');
+        const decision = evaluateSepoliaTestUsdtTransfer({ chainId: actualChain, asset: 'sepolia-test-USDt', tokenAddress: TEST_USDT_ADDRESS, amountBaseUnits, feeWei, policy: SEPOLIA_TEST_USDT_POLICY });
+        return { proposalId: randomUUID(), chainId: actualChain, asset: 'sepolia-test-USDt' as const, tokenAddress: TEST_USDT_ADDRESS, recipient, amountBaseUnits: amountBaseUnits.toString(), feeWei: feeWei.toString(), decision: decision.outcome, reason: decision.reason };
       } finally { wdk.dispose(); }
     });
     this.quoteCache.set(quote.proposalId, quote);
@@ -154,65 +156,57 @@ export class SepoliaWalletService {
     if (!previous) throw new Error('Transfer quote expired. Create and review a fresh quote.');
     if (previous.decision === 'deny') throw new Error('Policy denied this transfer.');
     if (previous.decision === 'require_approval' && !this.approved.has(proposalId)) throw new Error('This transfer requires a separate explicit policy approval.');
-    this.inFlight = true;
-    this.quoteCache.delete(proposalId);
-    this.approved.delete(proposalId);
-    let reachedSigning = false;
-    let reachedBroadcast = false;
+    this.inFlight = true; this.quoteCache.delete(proposalId); this.approved.delete(proposalId);
+    let reachedSubmission = false;
     try {
       const record = await this.requireReadyVault();
-      const validatedRecipient = validateEvmAddress(previous.recipient);
-      const amountWei = BigInt(previous.amountWei);
+      const recipient = validateEvmAddress(previous.recipient);
+      const amountBaseUnits = BigInt(previous.amountBaseUnits);
       const result = await this.withAccount(record, async (account, wdk) => {
         try {
           const actualChain = Number(BigInt(await this.rpc('eth_chainId', [])));
-          if (actualChain !== SEPOLIA_CHAIN_ID || previous.chainId !== SEPOLIA_CHAIN_ID) throw new Error('Network changed; transfer stopped.');
-          const transaction = await this.buildTransaction(validatedRecipient, amountWei, await account.getAddress());
-          const currentQuote = await account.quoteSendTransaction(transaction);
-          const feeWei = BigInt(currentQuote.fee);
-          const balance = await account.getBalance();
-          if (amountWei + feeWei > balance) throw new Error('Wallet balance no longer covers the transfer and fee.');
-          const decision = evaluateSepoliaEthTransfer({ chainId: actualChain, asset: previous.asset, amountWei, feeWei, policy: SEPOLIA_ETH_POLICY });
+          if (actualChain !== SEPOLIA_CHAIN_ID || previous.chainId !== SEPOLIA_CHAIN_ID || previous.tokenAddress !== TEST_USDT_ADDRESS || !(await this.verifyTokenContract())) throw new Error('Network or test token changed; transfer stopped.');
+          if (recipient !== previous.recipient || amountBaseUnits.toString() !== previous.amountBaseUnits) throw new Error('Critical transfer fields changed; create a new quote.');
+          if (BigInt(await account.getTokenBalance(TEST_USDT_ADDRESS)) < amountBaseUnits) throw new Error('Test USD₮ balance no longer covers this transfer.');
+          const estimate = await account.quoteTransfer({ token: TEST_USDT_ADDRESS, recipient, amount: amountBaseUnits });
+          const feeWei = BigInt(estimate.fee);
+          if (feeWei > BigInt(await account.getBalance())) throw new Error('Sepolia ETH balance no longer covers the estimated network fee.');
+          const decision = evaluateSepoliaTestUsdtTransfer({ chainId: actualChain, asset: previous.asset, tokenAddress: previous.tokenAddress, amountBaseUnits, feeWei, policy: SEPOLIA_TEST_USDT_POLICY });
           if (decision.outcome === 'deny' || (decision.outcome === 'require_approval' && previous.decision !== 'require_approval')) throw new Error(`Final policy revalidation denied or requires approval: ${decision.reason}`);
-          if (previous.recipient !== validatedRecipient || previous.amountWei !== amountWei.toString()) throw new Error('Critical transfer fields changed; create a new quote.');
-          if (feeWei.toString() !== previous.feeWei || String(transaction.gasLimit) !== previous.gasLimit || String(transaction.maxFeePerGas ?? transaction.gasPrice) !== previous.maxFeePerGas || String(transaction.maxPriorityFeePerGas ?? '') !== String(previous.maxPriorityFeePerGas ?? '')) throw new Error('The network fee estimate changed. Create and review a fresh quote.');
+          if (feeWei.toString() !== previous.feeWei) throw new Error('The network fee estimate changed. Create and review a fresh quote.');
           await onState('signing', { policyDecision: decision.outcome, feeWei: feeWei.toString() });
-          reachedSigning = true;
-          const signed = await account.signTransaction(transaction);
-          await onState('signed');
-          await onState('broadcast_attempt');
-          let broadcast;
-          try { broadcast = await account.sendTransaction(signed); }
-          catch {
-            // Broadcast can have reached the node even if its response was lost. Never resend.
-            await onState('unknown', { reason: 'broadcast_response_ambiguous' });
-            return { ambiguous: true as const };
-          }
-          reachedBroadcast = true;
-          await onState('broadcast', { txHash: broadcast.hash });
-          return { hash: broadcast.hash };
+          await onState('broadcast_attempt'); reachedSubmission = true;
+          let sent;
+          try { sent = await account.transfer({ token: TEST_USDT_ADDRESS, recipient, amount: amountBaseUnits }); }
+          catch { await onState('unknown', { reason: 'submission_response_ambiguous' }); return { ambiguous: true as const }; }
+          await onState('broadcast', { txHash: sent.hash });
+          return { hash: sent.hash };
         } finally { wdk.dispose(); }
       });
-      return 'ambiguous' in result ? { status: 'unknown', error: 'Broadcast outcome is unknown. Check the transaction list before retrying.' } : { status: 'broadcast', hash: result.hash };
+      return 'ambiguous' in result ? { status: 'unknown', error: 'Submission outcome is unknown. Check activity before retrying.' } : { status: 'broadcast', hash: result.hash };
     } catch (error) {
-      if (reachedBroadcast) await onState('unknown', { reason: 'broadcast_audit_or_response_ambiguous' }).catch(() => undefined);
-      else if (reachedSigning) await onState('failed', { reason: 'signing_or_broadcast_failed' }).catch(() => undefined);
+      if (reachedSubmission) await onState('unknown', { reason: 'submission_or_audit_response_ambiguous' }).catch(() => undefined);
       throw error;
     } finally { this.inFlight = false; }
   }
 
-  async verifyReceipt(hash: string): Promise<{ status: 'confirmed' | 'failed' | 'pending' | 'unknown'; hash: string; from?: string; recipient?: string; valueWei?: string; blockNumber?: number }> {
+  async verifyReceipt(hash: string): Promise<{ status: 'confirmed' | 'failed' | 'pending' | 'unknown'; hash: string; from?: string; recipient?: string; tokenAddress?: string; amountBaseUnits?: string; blockNumber?: number }> {
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Invalid transaction hash.');
     try {
-      const [tx, receipt] = await Promise.all([
-        this.rpc('eth_getTransactionByHash', [hash], true),
-        this.rpc('eth_getTransactionReceipt', [hash], true),
-      ]);
+      const [tx, receipt] = await Promise.all([this.rpc('eth_getTransactionByHash', [hash], true), this.rpc('eth_getTransactionReceipt', [hash], true)]);
       if (!tx || !receipt) return { status: 'pending', hash };
       if (Number(BigInt(await this.rpc('eth_chainId', [], true))) !== SEPOLIA_CHAIN_ID || (tx.chainId && Number(BigInt(tx.chainId)) !== SEPOLIA_CHAIN_ID)) return { status: 'unknown', hash };
-      if (receipt.transactionHash?.toLowerCase() !== hash.toLowerCase() || !/^0x[0-9a-fA-F]{40}$/.test(tx.from ?? '') || !/^0x[0-9a-fA-F]{40}$/.test(tx.to ?? '') || typeof tx.value !== 'string' || (tx.input !== '0x' && tx.input !== '0x0')) return { status: 'unknown', hash };
+      const decoded = decodeTestUsdtTransfer(tx.input ?? tx.data, tx.value ?? '0x0');
+      if (receipt.transactionHash?.toLowerCase() !== hash.toLowerCase() || tx.to?.toLowerCase() !== TEST_USDT_ADDRESS.toLowerCase() || !/^0x[0-9a-fA-F]{40}$/.test(tx.from ?? '') || !decoded) return { status: 'unknown', hash };
       const status = receipt.status === '0x1' ? 'confirmed' : receipt.status === '0x0' ? 'failed' : 'unknown';
-      return { status, hash, from: tx.from, recipient: tx.to, valueWei: BigInt(tx.value).toString(), blockNumber: Number(BigInt(receipt.blockNumber)) };
+      const hasMatchingLog = Array.isArray(receipt.logs) && receipt.logs.some((log: any) => {
+        try {
+          if (log.address?.toLowerCase() !== TEST_USDT_ADDRESS.toLowerCase()) return false;
+          const parsed = ERC20_INTERFACE.parseLog({ topics: log.topics, data: log.data });
+          return parsed?.name === 'Transfer' && String(parsed.args[0]).toLowerCase() === tx.from.toLowerCase() && String(parsed.args[1]).toLowerCase() === decoded.recipient.toLowerCase() && (parsed.args[2] as bigint).toString() === decoded.amountBaseUnits;
+        } catch { return false; }
+      });
+      return { status: status === 'confirmed' && !hasMatchingLog ? 'unknown' : status, hash, from: tx.from, recipient: decoded.recipient, tokenAddress: tx.to, amountBaseUnits: decoded.amountBaseUnits, blockNumber: Number(BigInt(receipt.blockNumber)) };
     } catch { return { status: 'unknown', hash }; }
   }
 
@@ -224,20 +218,18 @@ export class SepoliaWalletService {
     return body.result;
   }
 
-  private async buildTransaction(recipient: string, amountWei: bigint, from: string) {
-    const provider = new JsonRpcProvider(SEPOLIA_RPC_URL, SEPOLIA_CHAIN_ID, { staticNetwork: true });
+  private async verifyTokenContract(): Promise<boolean> {
     try {
-      const [gasLimit, feeData, nonce] = await Promise.all([
-        provider.estimateGas({ from, to: recipient, value: amountWei, chainId: SEPOLIA_CHAIN_ID }),
-        provider.getFeeData(),
-        provider.getTransactionCount(from, 'pending'),
-      ]);
-      if (feeData.maxFeePerGas !== null && feeData.maxPriorityFeePerGas !== null) {
-        return { to: recipient, value: amountWei, chainId: SEPOLIA_CHAIN_ID, nonce, gasLimit, maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas };
-      }
-      if (feeData.gasPrice === null) throw new Error('Fee estimate unavailable.');
-      return { to: recipient, value: amountWei, chainId: SEPOLIA_CHAIN_ID, nonce, gasLimit, gasPrice: feeData.gasPrice };
-    } finally { provider.destroy(); }
+      const code = await this.rpc('eth_getCode', [TEST_USDT_ADDRESS, 'latest']);
+      if (typeof code !== 'string' || code === '0x') return false;
+      const call = async (name: 'name' | 'symbol' | 'decimals') => {
+        const data = ERC20_INTERFACE.encodeFunctionData(name);
+        const result = await this.rpc('eth_call', [{ to: TEST_USDT_ADDRESS, data }, 'latest']);
+        return ERC20_INTERFACE.decodeFunctionResult(name, result)[0];
+      };
+      const [name, symbol, decimals] = await Promise.all([call('name'), call('symbol'), call('decimals')]);
+      return name === TEST_USDT_NAME && symbol === TEST_USDT_SYMBOL && Number(decimals) === TEST_USDT_DECIMALS;
+    } catch { return false; }
   }
 
   private async requireReadyVault(): Promise<VaultRecord> {
@@ -272,7 +264,7 @@ export class SepoliaWalletService {
     const decrypted = await this.safeStorage.decryptStringAsync(Buffer.from(record.encryptedSeed, 'base64'));
     let seed = decrypted.result;
     if (!WDK.isValidSeed(seed)) throw new Error('Encrypted wallet seed could not be validated.');
-    const wdk = new WDK(seed).registerWallet(WALLET_ID, WalletManagerEvm, { provider: SEPOLIA_RPC_URL, chainId: SEPOLIA_CHAIN_ID, transactionMaxFee: SEPOLIA_ETH_POLICY.maxFeeWei });
+    const wdk = new WDK(seed).registerWallet(WALLET_ID, WalletManagerEvm, { provider: SEPOLIA_RPC_URL, chainId: SEPOLIA_CHAIN_ID, transactionMaxFee: SEPOLIA_TEST_USDT_POLICY.maxFeeWei });
     seed = '';
     let account;
     try { account = await wdk.getAccount(WALLET_ID, 0); }
@@ -282,5 +274,5 @@ export class SepoliaWalletService {
 }
 
 export function publicQuoteDetails(quote: TransferQuote): Record<string, string | number> {
-  return { chainId: quote.chainId, asset: quote.asset, recipient: quote.recipient, amount: formatWeiAsEth(BigInt(quote.amountWei)), feeEth: formatWeiAsEth(BigInt(quote.feeWei)), totalDebitEth: formatWeiAsEth(BigInt(quote.totalDebitWei)), decision: quote.decision, reason: quote.reason };
+  return { chainId: quote.chainId, asset: quote.asset, tokenAddress: quote.tokenAddress, recipient: quote.recipient, amount: formatTestUsdt(BigInt(quote.amountBaseUnits)), feeEth: formatWeiAsEth(BigInt(quote.feeWei)), decision: quote.decision, reason: quote.reason };
 }

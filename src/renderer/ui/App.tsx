@@ -5,6 +5,7 @@ import type { TransferQuote, WalletStatus } from '../../electron/sepolia-wallet'
 import type { TransferRecord } from '../../electron/transfer-store';
 import { CURRENCY_METADATA } from '../../electron/treasury-domain';
 import { SEPOLIA_CHAIN_ID } from '../../electron/sepolia-domain';
+import { formatTestUsdt } from '../../electron/sepolia-domain';
 import { compareTreasuryCosts, type ComparedCostQuote } from '../../electron/treasury-cost';
 
 const navigation = [
@@ -31,10 +32,10 @@ export function App() {
   const [storageState, setStorageState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [auditValid, setAuditValid] = useState<boolean | null>(null);
   const [policyError, setPolicyError] = useState('');
-  const [walletStatus, setWalletStatus] = useState<WalletStatus>({ setup: 'not-created', network: 'not-checked', address: null, balanceWei: null, refreshedAt: null });
+  const [walletStatus, setWalletStatus] = useState<WalletStatus>({ setup: 'not-created', network: 'not-checked', address: null, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, refreshedAt: null });
   const [transferRows, setTransferRows] = useState<TransferRecord[]>([]);
   const [transferRecipient, setTransferRecipient] = useState('');
-  const [transferAmount, setTransferAmount] = useState('0.0001');
+  const [transferAmount, setTransferAmount] = useState('1');
   const [transferQuote, setTransferQuote] = useState<TransferQuote | null>(null);
   const [walletError, setWalletError] = useState('');
   const [walletBusy, setWalletBusy] = useState(false);
@@ -62,7 +63,7 @@ export function App() {
   }
   async function refreshWallet() {
     try { setWalletStatus(await window.atg.getSepoliaWalletStatus()); }
-    catch { setWalletStatus({ setup: 'unavailable', network: 'unavailable', address: null, balanceWei: null, refreshedAt: null, error: 'Wallet status unavailable; check local storage and RPC status.' }); }
+    catch { setWalletStatus({ setup: 'unavailable', network: 'unavailable', address: null, balanceWei: null, testUsdtBalanceBaseUnits: null, testUsdtVerified: false, refreshedAt: null, error: 'Wallet status unavailable; check local storage and RPC status.' }); }
     try { setTransferRows(await window.atg.listSepoliaTransfers()); }
     catch { setTransferRows([]); setWalletError('Transfer history is invalid or unavailable. It was preserved, and new transfers fail closed.'); }
   }
@@ -181,25 +182,25 @@ export function App() {
           </section>
 
           <section className="panel wallet-panel" aria-labelledby="wallet-heading">
-            <div className="panel-heading"><div><div className="section-kicker">TESTNET ONLY <span /> SEPOLIA · CHAIN 11155111</div><h2 id="wallet-heading">Native Sepolia ETH wallet</h2></div><span className="tag tag-neutral">TEST ETH HAS NO VALUE</span></div>
-            <p className="ai-advisory">A dedicated local test wallet is encrypted with this device’s OS keyring. A separate restricted window displays its recovery words during setup. The backup exists only if you write them down securely. Creating this wallet is a local action; no funds are sent.</p>
-            <div className="policy-facts"><span>Policy hard limit <strong>0.001 ETH</strong></span><span>Approval threshold <strong>0.0005 ETH</strong></span><span>Estimated fee ceiling <strong>0.0001 ETH</strong></span><span>Native Sepolia ETH only · no fiat value</span></div>
+            <div className="panel-heading"><div><div className="section-kicker">TESTNET ONLY <span /> SEPOLIA · CHAIN 11155111</div><h2 id="wallet-heading">Sepolia test USD₮ wallet</h2></div><span className="tag tag-neutral">TEST TOKEN · NO VALUE</span></div>
+            <p className="ai-advisory">A dedicated local wallet is encrypted with this device’s OS keyring. Transfers use the Sepolia mock USD₮ token, which is not redeemable Tether USDT. Sepolia ETH remains necessary to pay gas. A separate restricted window displays recovery words during setup; creating the wallet sends no funds.</p>
+            <div className="policy-facts"><span>Test USD₮ transfer limit <strong>100</strong></span><span>Additional approval at <strong>50 USD₮</strong></span><span>Estimated fee ceiling <strong>0.0001 ETH</strong></span><span>Sepolia ETH required for gas</span></div>
             {walletStatus.setup === 'not-created' && <><button className="ai-button" onClick={() => void createWallet()} disabled={walletBusy}>Create local Sepolia test wallet</button><button className="ai-button secondary" onClick={() => void window.atg.restoreSepoliaWallet().catch((reason) => setWalletError(String(reason)))}>Restore from recovery phrase</button></>}
             {walletStatus.setup === 'unavailable' && <p role="status">Wallet status unavailable; creation and transfers are disabled until local secret storage can be read.</p>}
             {walletStatus.setup === 'backup-required' && <button className="ai-button secondary" onClick={() => void window.atg.reopenWalletBackup().catch((reason) => setWalletError(String(reason)))}>Continue wallet backup</button>}
-            {walletStatus.address && <div className="policy-result"><strong>Wallet {walletStatus.setup === 'ready' ? 'ready' : 'backup required'}</strong><span>Public address: <code>{walletStatus.address}</code> <button onClick={() => void navigator.clipboard.writeText(walletStatus.address!)}>Copy</button></span><span>Network: {walletStatus.network === 'verified' ? `Ethereum Sepolia · chain ID ${SEPOLIA_CHAIN_ID} (verified)` : `Identity ${walletStatus.network}; not verified`}</span><span>Balance: {walletStatus.balanceWei === null ? 'Unavailable' : `${weiToEth(walletStatus.balanceWei)} ETH`}{walletStatus.refreshedAt ? ` · refreshed ${new Date(walletStatus.refreshedAt).toLocaleTimeString()}` : ''}</span><button onClick={() => void refreshWallet()}>Refresh balance</button></div>}
-            {walletStatus.setup === 'ready' && walletStatus.network === 'verified' && <div className="proposal-form">
+            {walletStatus.address && <div className="policy-result"><strong>Wallet {walletStatus.setup === 'ready' ? 'ready' : 'backup required'}</strong><span>Public address: <code>{walletStatus.address}</code> <button onClick={() => void navigator.clipboard.writeText(walletStatus.address!)}>Copy</button></span><span>Network: {walletStatus.network === 'verified' ? `Ethereum Sepolia · chain ID ${SEPOLIA_CHAIN_ID} (verified)` : `Identity ${walletStatus.network}; not verified`}</span><span>Test USD₮: {walletStatus.testUsdtBalanceBaseUnits === null ? 'Unavailable' : `${formatTestUsdt(BigInt(walletStatus.testUsdtBalanceBaseUnits))} ${walletStatus.testUsdtVerified ? 'USD₮ (verified test token)' : 'USD₮ (contract unverified)'}`}</span><span>Gas balance: {walletStatus.balanceWei === null ? 'Unavailable' : `${weiToEth(walletStatus.balanceWei)} Sepolia ETH`}{walletStatus.refreshedAt ? ` · refreshed ${new Date(walletStatus.refreshedAt).toLocaleTimeString()}` : ''}</span>{walletStatus.error && <span>{walletStatus.error}</span>}<button onClick={() => void refreshWallet()}>Refresh balances</button></div>}
+            {walletStatus.setup === 'ready' && walletStatus.network === 'verified' && walletStatus.testUsdtVerified && <div className="proposal-form">
               <div className="proposal-input"><label className="ai-label" htmlFor="eth-recipient">Recipient address</label><input id="eth-recipient" value={transferRecipient} onChange={(event) => setTransferRecipient(event.target.value)} placeholder="0x…" /></div>
-              <div className="proposal-input"><label className="ai-label" htmlFor="eth-amount">Amount (ETH)</label><input id="eth-amount" inputMode="decimal" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} /></div>
+              <div className="proposal-input"><label className="ai-label" htmlFor="eth-amount">Amount (test USD₮)</label><input id="eth-amount" inputMode="decimal" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} /></div>
               <button className="ai-button" onClick={() => void createTransferQuote()} disabled={walletBusy}>Estimate fee &amp; evaluate policy</button>
             </div>}
-            {transferQuote && <div className="policy-result" aria-live="polite"><strong>Policy: {transferQuote.decision.replace('_', ' ').toUpperCase()}</strong><span>Sepolia · native ETH · recipient {transferQuote.recipient}</span><span>Amount {weiToEth(transferQuote.amountWei)} ETH · maximum fee quote {weiToEth(transferQuote.feeWei)} ETH · total debit ceiling {weiToEth(transferQuote.totalDebitWei)} ETH</span><span>Reason: {transferQuote.reason}</span>
+            {transferQuote && <div className="policy-result" aria-live="polite"><strong>Policy: {transferQuote.decision.replace('_', ' ').toUpperCase()}</strong><span>Sepolia · test USD₮ · recipient {transferQuote.recipient}</span><span>Amount {formatTestUsdt(BigInt(transferQuote.amountBaseUnits))} test USD₮ · estimated gas fee {weiToEth(transferQuote.feeWei)} Sepolia ETH</span><span>Reason: {transferQuote.reason}</span>
               {transferQuote.decision === 'require_approval' && !walletApproved && <button disabled={walletBusy} onClick={() => void approveTransfer()}>Approve this transfer</button>}
               {transferQuote.decision !== 'deny' && (transferQuote.decision === 'allow' || walletApproved) && <button disabled={walletBusy} onClick={() => void confirmTransfer()}>Review &amp; explicitly confirm signing</button>}
               {transferQuote.decision !== 'deny' && <button disabled={walletBusy} onClick={() => void window.atg.cancelSepoliaTransfer({ proposalId: transferQuote.proposalId }).then(() => { setTransferQuote(null); void refreshWallet(); })}>Cancel</button>}
             </div>}
             {walletError && <p className="ai-error" role="alert">{walletError}</p>}
-            <div className="policy-result"><strong>TRANSFER ACTIVITY ({transferRows.length})</strong>{transferRows.length === 0 && <span>No transfer has been proposed.</span>}{transferRows.map((row) => <div key={row.id}><strong>{row.state.toUpperCase()}</strong><span>{weiToEth(row.amountWei)} ETH to {row.recipient} · fee estimate {weiToEth(row.feeWei)} ETH</span>{row.txHash && <><span>Transaction: <code>{row.txHash}</code></span><button onClick={() => void verifyTransfer(row)}>Verify receipt independently</button><button onClick={() => void window.atg.openSepoliaExplorer({ proposalId: row.id })}>Open Sepolia Etherscan</button></>}</div>)}</div>
+            <div className="policy-result"><strong>TRANSFER ACTIVITY ({transferRows.length})</strong>{transferRows.length === 0 && <span>No transfer has been proposed.</span>}{transferRows.map((row) => <div key={row.id}><strong>{row.state.toUpperCase()}</strong><span>{row.asset === 'native-ETH' ? `${weiToEth(row.amountWei ?? '0')} legacy ETH activity` : `${formatTestUsdt(BigInt(row.amountBaseUnits ?? '0'))} test USD₮`} to {row.recipient} · gas estimate {weiToEth(row.feeWei)} ETH</span>{row.txHash && <><span>Transaction: <code>{row.txHash}</code></span>{row.asset === 'sepolia-test-USDt' && <button onClick={() => void verifyTransfer(row)}>Verify receipt independently</button>}<button onClick={() => void window.atg.openSepoliaExplorer({ proposalId: row.id })}>Open Sepolia Etherscan</button></>}</div>)}</div>
           </section>
 
           <section className="panel policy-demo" aria-labelledby="cost-planner-heading">
@@ -247,7 +248,7 @@ export function App() {
           <section className="lower-grid">
             <article className="panel policy-panel">
               <div className="panel-heading"><div><div className="section-kicker">02 <span /> GUARDRAILS</div><h2>Budget &amp; policies</h2></div><span className="outline-icon">≋</span></div>
-              <div className="empty-state policy-empty"><div className="empty-illustration policy-illustration"><span className="ring ring-one"/><span className="ring ring-two"/><span className="shield-shape">◇</span><span className="tiny-spark">✳</span></div><div className="empty-title">Example rules only</div><p>A deterministic synthetic KES example policy and a separate Sepolia native ETH test policy are implemented. No business stablecoin policy is configured.</p><span className="soft-label">NO LIVE STABLECOIN POLICY</span></div>
+              <div className="empty-state policy-empty"><div className="empty-illustration policy-illustration"><span className="ring ring-one"/><span className="ring ring-two"/><span className="shield-shape">◇</span><span className="tiny-spark">✳</span></div><div className="empty-title">Example rules only</div><p>A deterministic synthetic KES example policy and a separate Sepolia mock USD₮ test policy are implemented. No business stablecoin policy is configured.</p><span className="soft-label">NO LIVE STABLECOIN POLICY</span></div>
             </article>
 
             <article className="panel actions-panel">

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { TransferStore, verifyTransferEvents } from '../dist/electron/transfer-store.js';
+import { TEST_USDT_ADDRESS } from '../dist/electron/sepolia-domain.js';
 
 test('transfer lifecycle and hash-chained audit survive restart with minimal public details', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atg-transfer-')); t.after(() => rm(dir, { recursive: true, force: true }));
@@ -18,6 +19,19 @@ test('transfer lifecycle and hash-chained audit survive restart with minimal pub
   assert.equal(record.state, 'broadcast'); assert.equal(record.approved, true); assert.equal(record.confirmed, true);
   const audit = await restarted.audit(); assert.equal(audit.valid, true); assert.equal(audit.events.length, 9);
   assert.doesNotMatch(JSON.stringify(audit.events), /mnemonic|private.?key|seedphrase|signedTransaction/i);
+});
+
+test('transfer store accepts test USD₮ rows while preserving legacy ETH activity', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atg-transfer-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'transfers.json'); const store = new TransferStore(file);
+  const legacy = await store.create({ chainId: 11155111, asset: 'native-ETH', recipient: `0x${'a'.repeat(40)}`, amountWei: '100', feeWei: '2', decision: 'allow', reason: 'legacy' });
+  const token = await store.create({ chainId: 11155111, asset: 'sepolia-test-USDt', tokenAddress: TEST_USDT_ADDRESS, recipient: `0x${'b'.repeat(40)}`, amountBaseUnits: '1234567', feeWei: '3', decision: 'allow', reason: 'test-token' });
+  const restarted = new TransferStore(file); const records = await restarted.list();
+  assert.deepEqual(records.map((item) => item.asset), ['sepolia-test-USDt', 'native-ETH']);
+  assert.equal(records[0].amountBaseUnits, '1234567');
+  assert.equal(records[1].amountWei, '100');
+  assert.equal((await restarted.audit()).valid, true);
+  assert.ok(legacy.id && token.id);
 });
 
 test('transfer audit tampering is detected and the corrupt snapshot is preserved', async (t) => {

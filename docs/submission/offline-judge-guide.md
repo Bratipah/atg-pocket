@@ -54,7 +54,7 @@ In ATG Pocket:
 5. Under **Evaluate a synthetic proposal**, save and evaluate `8000` KES (allow), then `10000` KES (requires approval), then `20000.01` KES (deny). These are synthetic KES policy examples, not KES payments or settlement.
 6. Show **LOCAL AUDIT** / audit verification and the saved local proposal records. Explain that the local hash chain checks retained event consistency but is not a remote audit anchor.
 7. Under **Compare stated route costs**, compare the example rows or enter your own values. The defaults are synthetic and the planner does not fetch or validate market quotes, liquidity, freshness, or fees.
-8. Show that the wallet is Sepolia native test ETH only. Without internet, balance/fee refresh and all wallet network actions are unavailable. Do not attempt to broadcast while offline.
+8. Show the Sepolia test USD₮ wallet and its Sepolia ETH gas balance. Without internet, balance/fee refresh and all wallet network actions are unavailable. Do not attempt to broadcast while offline.
 
 ## What judges should expect
 
@@ -65,7 +65,8 @@ In ATG Pocket:
 | Local proposals and audit verification | Yes | Local persistence and hash-chain consistency on this device. |
 | Entered-quote cost planner | Yes | Decimal-safe comparison of user-entered numbers only. |
 | Sepolia wallet setup, balance, fees, signing/broadcast, receipt lookup | No | These require a network connection and Sepolia RPC. |
-| USDT/USDC liquidity, swaps, FX routing, KES settlement | Not implemented | These are roadmap items, not part of this demonstration. |
+| Sepolia mock USD₮ test transfer | Online only | ERC-20 testnet transfer only; test token is not redeemable Tether USDT. Sepolia ETH pays gas. |
+| Business USDT/USDC liquidity, swaps, FX routing, KES settlement | Not implemented | These are roadmap items, not part of this demonstration. |
 
 ## Troubleshooting
 
@@ -75,3 +76,16 @@ In ATG Pocket:
 - **Wallet status or balance is unavailable:** expected offline. Reconnect only for Sepolia actions; test ETH is not a business stablecoin balance.
 
 For broader architecture and implementation status, see the [project README](../../README.md) and [milestone record](../implementation/milestone-plan.md).
+
+
+## Online test USD₮ demonstration
+
+Wallet transfers cannot be reproduced offline. To try the ERC-20 flow while online:
+
+1. Ensure GNOME Keyring is available, then create or restore the dedicated Sepolia wallet and record its recovery phrase securely.
+2. Fund it with Sepolia ETH for gas and obtain Sepolia mock USD₮ from a faucet linked by [WDK testnet guidance](https://docs.wdk.tether.io/sdk/wallet-modules/wallet-evm-erc-4337/configuration/).
+3. Confirm the displayed token balance and contract verification. The configured contract is `0xd077A400968890Eacc75cdc901F0356c943e4fDb` (6 decimals); see [Candide’s Sepolia token list](https://docs.candide.dev/wallet/paymaster/tokens-supported/).
+4. Enter a recipient address and an amount below 50 test USD₮, review the quote and fee in Sepolia ETH, then use the separate OS confirmation to submit. Amounts at or above 50 test USD₮ require an additional approval; the hard limit is 100.
+5. Use **Verify receipt independently** to check the receipt, sender, recipient, token contract, exact amount and ERC-20 Transfer event. No faucet or token transfer is performed by automated tests.
+
+The displayed USD₮ is a mock/test token and is not redeemable Tether USDT. Public RPC access, test token availability and Sepolia gas are required.

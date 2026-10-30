@@ -119,7 +119,7 @@ try {
     }
     const result = await evaluate("({ heading: document.querySelector('.wallet-panel h2')?.textContent, create: Array.from(document.querySelectorAll('.wallet-panel button')).some((button) => button.textContent.includes('Create local Sepolia test wallet')), history: document.querySelector('.wallet-panel .policy-result strong')?.textContent, backupWindowMethodsOnMain: Boolean(window.atg.getPhrase || window.atg.restorePhrase), devtoolsSetting: 'checked from compiled Electron main options' })", sessionId);
     console.log('WALLET_UI', JSON.stringify(result));
-    if (result.heading !== 'Native Sepolia ETH wallet' || !result.create || result.backupWindowMethodsOnMain) throw new Error('Sepolia wallet UI or renderer secret boundary check failed');
+    if (result.heading !== 'Sepolia test USD₮ wallet' || !result.create || result.backupWindowMethodsOnMain) throw new Error('Sepolia wallet UI or renderer secret boundary check failed');
     await evaluate("Array.from(document.querySelectorAll('.wallet-panel button')).find((button) => button.textContent.includes('Restore from recovery phrase'))?.click()", sessionId);
     let backupTarget;
     const backupDeadline = Date.now() + 8_000;

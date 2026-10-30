@@ -9,9 +9,9 @@
 | M0 — Feasibility | Complete | QVAC model and device tests, utility-process inference, WDK API/RPC exploration, measurements, constraints and preserved smoke harnesses. See [`feasibility.md`](../architecture/feasibility.md). |
 | M1 — Desktop foundation | Complete | Electron + React + TypeScript, restricted renderer and app shell. |
 | M2 — Local AI | Complete for prototype | QVAC utility process, cached Qwen3 600M Q4_0 inference and advisory UI. Output quality is limited; offline inference after caching has been demonstrated. |
-| M3 — Deterministic policy | Complete | Exact-money synthetic KES example and separate Sepolia native ETH test policy. No KES settlement or stablecoin controls. |
+| M3 — Deterministic policy | Complete | Exact-money synthetic KES example and separate Sepolia test USD₮ ERC-20 policy (Sepolia ETH gas). No KES settlement or stablecoin controls. |
 | M4 — Local records | Complete | Atomic local proposal/audit persistence and hash-chain verification. Local owner can rewrite the full chain. |
-| M5A — Sepolia wallet workflow | Implemented; real transaction acceptance outstanding | GNOME Keyring/safeStorage boundary, dedicated phrase window, WDK native ETH fee quote/sign/broadcast lifecycle, approval and confirmation, transfer store, independent RPC receipt checks, automated coverage. **No real transfer has been completed and independently verified.** |
+| M5A — Sepolia wallet workflow | Implemented; real transaction acceptance outstanding | GNOME Keyring/safeStorage boundary, dedicated phrase window, WDK ERC-20 test USD₮ quote/transfer lifecycle with ETH gas, approval and confirmation, transfer store, independent RPC receipt checks, automated coverage. **No real transfer has been completed and independently verified.** |
 | M6 — Treasury cost planner | Complete as illustrative arithmetic | Decimal-safe comparison of explicit entered quotes. No API, market data, liquidity, or execution. |
 
 ## Quote and FX feasibility decision
@@ -22,9 +22,9 @@ Therefore this release includes the safe fallback in [`treasury-cost.ts`](../../
 
 ## Wallet and transfer acceptance
 
-Implemented wallet capability is native Sepolia ETH (chain ID 11155111), never USDT/USDC. KES demonstration policy is not reused for crypto. Online RPC, current balance, fees, confirmation, signing/broadcast and independent receipt lookup all require connectivity. Offline proposal creation or policy evaluation is not a payment.
+Implemented wallet transfer is the Sepolia mock USD₮ ERC-20 token (chain ID 11155111); native Sepolia ETH pays gas. It is not redeemable Tether USDT or a production stablecoin integration. KES demonstration policy is not reused for crypto. Online RPC, current balance, fees, confirmation, signing/broadcast and independent receipt lookup all require connectivity. Offline proposal creation or policy evaluation is not a payment.
 
-Before reporting a real transfer as complete, a dedicated demo wallet must be created and backed up, funded with Sepolia test ETH, and used for an explicitly reviewed transfer. Retain the hash and independently establish chain ID, successful receipt, sender, recipient, exact value and transaction shape using the second RPC and explorer. Until those steps have actually occurred, report the transfer as unverified. Automated tests must never send a transaction or generate/display a wallet phrase.
+Before reporting a real transfer as complete, a dedicated demo wallet must be created and backed up, funded with Sepolia mock USD₮ and test ETH for gas, and used for an explicitly reviewed transfer. Retain the hash and independently establish chain ID, successful receipt, sender, recipient, exact token contract, USD₮ amount, Transfer event and transaction shape using the second RPC and explorer. Until those steps have actually occurred, report the transfer as unverified. Automated tests must never send a transaction or generate/display a wallet phrase.
 
 ## Reproducible local demonstrations
 

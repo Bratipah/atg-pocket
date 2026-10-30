@@ -1,16 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { TEST_USDT_ADDRESS } from './sepolia-domain.js';
 
 export type TransferState = 'proposed' | 'awaiting_approval' | 'ready_to_confirm' | 'cancelled' | 'rejected' | 'signing' | 'signed' | 'broadcast' | 'confirmed' | 'failed' | 'unknown';
 export interface TransferRecord {
-  id: string; createdAt: string; updatedAt: string; chainId: number; asset: 'native-ETH'; recipient: string;
-  amountWei: string; feeWei: string; decision: 'allow' | 'require_approval' | 'deny'; approved: boolean;
+  id: string; createdAt: string; updatedAt: string; chainId: number; asset: 'native-ETH' | 'sepolia-test-USDt'; recipient: string;
+  amountWei?: string; tokenAddress?: string; amountBaseUnits?: string; feeWei: string; decision: 'allow' | 'require_approval' | 'deny'; approved: boolean;
   confirmed: boolean; state: TransferState; txHash: string | null; receiptStatus: string | null;
 }
 export interface TransferEvent { id: string; timestamp: string; transferId: string; type: string; details: Record<string, unknown>; previousHash: string; hash: string }
 interface Snapshot { schemaVersion: 1; transfers: TransferRecord[]; events: TransferEvent[] }
-export interface NewTransfer { id?: string; chainId: number; asset: 'native-ETH'; recipient: string; amountWei: string; feeWei: string; decision: TransferRecord['decision']; reason: string }
+export type NewTransfer = { id?: string; chainId: number; asset: 'native-ETH'; recipient: string; amountWei: string; feeWei: string; decision: TransferRecord['decision']; reason: string } | { id?: string; chainId: number; asset: 'sepolia-test-USDt'; recipient: string; tokenAddress: string; amountBaseUnits: string; feeWei: string; decision: TransferRecord['decision']; reason: string };
 
 /** Atomic snapshot and SHA-256 chain modeled on TreasuryStore; only public lifecycle data is stored. */
 export class TransferStore {
@@ -22,9 +23,9 @@ export class TransferStore {
       const data = await this.load();
       const now = new Date().toISOString(); const id = input.id ?? randomUUID();
       const state: TransferState = input.decision === 'deny' ? 'rejected' : input.decision === 'require_approval' ? 'awaiting_approval' : 'ready_to_confirm';
-      const transfer: TransferRecord = { id, createdAt: now, updatedAt: now, chainId: input.chainId, asset: input.asset, recipient: input.recipient, amountWei: input.amountWei, feeWei: input.feeWei, decision: input.decision, approved: false, confirmed: false, state, txHash: null, receiptStatus: null };
+      const transfer: TransferRecord = { id, createdAt: now, updatedAt: now, chainId: input.chainId, asset: input.asset, recipient: input.recipient, ...(input.asset === 'native-ETH' ? { amountWei: input.amountWei } : { tokenAddress: input.tokenAddress, amountBaseUnits: input.amountBaseUnits }), feeWei: input.feeWei, decision: input.decision, approved: false, confirmed: false, state, txHash: null, receiptStatus: null };
       data.transfers.push(transfer);
-      await this.append(data, id, 'proposal.created', { chainId: input.chainId, asset: input.asset, recipient: input.recipient, amountWei: input.amountWei });
+      await this.append(data, id, 'proposal.created', { chainId: input.chainId, asset: input.asset, recipient: input.recipient, ...(input.asset === 'native-ETH' ? { amountWei: input.amountWei } : { tokenAddress: input.tokenAddress, amountBaseUnits: input.amountBaseUnits }) });
       await this.append(data, id, 'policy.evaluated', { decision: input.decision, reason: input.reason, feeWei: input.feeWei });
       await this.append(data, id, `transfer.${state}`, { initial: true });
       await this.commit(data);
@@ -115,7 +116,11 @@ function validDetails(value: any): boolean {
   return Object.values(value).every((item) => ['string', 'number', 'boolean'].includes(typeof item) && (typeof item !== 'string' || item.length <= 200));
 }
 function validTransfer(value: any): value is TransferRecord {
-  return exactKeys(value, ['id', 'createdAt', 'updatedAt', 'chainId', 'asset', 'recipient', 'amountWei', 'feeWei', 'decision', 'approved', 'confirmed', 'state', 'txHash', 'receiptStatus']) && /^[0-9a-f-]{36}$/i.test(value.id) && isUtc(value.createdAt) && isUtc(value.updatedAt) && value.chainId === 11155111 && value.asset === 'native-ETH' && /^0x[0-9a-fA-F]{40}$/.test(value.recipient) && /^\d+$/.test(value.amountWei) && /^\d+$/.test(value.feeWei) && ['allow', 'require_approval', 'deny'].includes(value.decision) && typeof value.approved === 'boolean' && typeof value.confirmed === 'boolean' && ['proposed', 'awaiting_approval', 'ready_to_confirm', 'cancelled', 'rejected', 'signing', 'signed', 'broadcast', 'confirmed', 'failed', 'unknown'].includes(value.state) && (value.txHash === null || /^0x[0-9a-fA-F]{64}$/.test(value.txHash)) && (value.receiptStatus === null || ['confirmed', 'failed', 'pending', 'unknown'].includes(value.receiptStatus));
+  const base = /^[0-9a-f-]{36}$/i.test(value?.id ?? '') && isUtc(value?.createdAt) && isUtc(value?.updatedAt) && value?.chainId === 11155111 && /^0x[0-9a-fA-F]{40}$/.test(value?.recipient ?? '') && /^\d+$/.test(value?.feeWei ?? '') && ['allow', 'require_approval', 'deny'].includes(value?.decision) && typeof value?.approved === 'boolean' && typeof value?.confirmed === 'boolean' && ['proposed', 'awaiting_approval', 'ready_to_confirm', 'cancelled', 'rejected', 'signing', 'signed', 'broadcast', 'confirmed', 'failed', 'unknown'].includes(value?.state) && (value?.txHash === null || /^0x[0-9a-fA-F]{64}$/.test(value?.txHash)) && (value?.receiptStatus === null || ['confirmed', 'failed', 'pending', 'unknown'].includes(value?.receiptStatus));
+  const common = ['id', 'createdAt', 'updatedAt', 'chainId', 'asset', 'recipient', 'feeWei', 'decision', 'approved', 'confirmed', 'state', 'txHash', 'receiptStatus'];
+  const legacy = value?.asset === 'native-ETH' && exactKeys(value, [...common, 'amountWei']) && /^\d+$/.test(value.amountWei ?? '');
+  const token = value?.asset === 'sepolia-test-USDt' && exactKeys(value, [...common, 'tokenAddress', 'amountBaseUnits']) && value.tokenAddress === TEST_USDT_ADDRESS && /^\d+$/.test(value.amountBaseUnits ?? '');
+  return base && (legacy || token);
 }
 function validSnapshot(value: any): value is Snapshot {
   if (!exactKeys(value, ['schemaVersion', 'transfers', 'events']) || value.schemaVersion !== 1 || !Array.isArray(value.transfers) || !value.transfers.every(validTransfer) || !Array.isArray(value.events) || !verifyTransferEvents(value.events)) return false;
@@ -127,7 +132,7 @@ function validSnapshot(value: any): value is Snapshot {
     const policy = events.find((event: TransferEvent) => event.type === 'policy.evaluated');
     const stateEvent = [...events].reverse().find((event: TransferEvent) => event.type.startsWith('transfer.'));
     if (!proposal || !policy || !stateEvent || stateEvent.type !== `transfer.${transfer.state}`) return false;
-    if (proposal.details.chainId !== transfer.chainId || proposal.details.asset !== transfer.asset || proposal.details.recipient !== transfer.recipient || proposal.details.amountWei !== transfer.amountWei) return false;
+    if (proposal.details.chainId !== transfer.chainId || proposal.details.asset !== transfer.asset || proposal.details.recipient !== transfer.recipient || (transfer.asset === 'native-ETH' ? proposal.details.amountWei !== transfer.amountWei : proposal.details.amountBaseUnits !== transfer.amountBaseUnits || proposal.details.tokenAddress !== transfer.tokenAddress)) return false;
     if (policy.details.decision !== transfer.decision || policy.details.feeWei !== transfer.feeWei) return false;
     if (transfer.txHash && !events.some((event: TransferEvent) => event.type === 'transfer.broadcast' && event.details.txHash === transfer.txHash)) return false;
     if (transfer.receiptStatus && !events.some((event: TransferEvent) => event.details.receiptStatus === transfer.receiptStatus)) return false;

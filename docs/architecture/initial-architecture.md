@@ -4,7 +4,7 @@
 
 ## Product boundary
 
-ATG Pocket is an offline-first stablecoin treasury guardian prototype. Implemented capabilities are a local advisory copilot, deterministic synthetic KES policy example, local proposal and audit records, a Sepolia native ETH test wallet, and a deterministic calculator for explicitly entered route quotes. The longer-term USDT/USDC liquidity and cross-border cost direction is not implemented. KES fixtures do not settle KES; Sepolia ETH is not a stablecoin balance.
+ATG Pocket is an offline-first stablecoin treasury guardian prototype. Implemented capabilities are a local advisory copilot, deterministic synthetic KES policy example, local proposal and audit records, a Sepolia mock USD₮ ERC-20 test wallet (with native ETH for gas), and a deterministic calculator for explicitly entered route quotes. The longer-term USDT/USDC liquidity and cross-border cost direction is not implemented. KES fixtures do not settle KES; Sepolia ETH is not a stablecoin balance.
 
 ## Runtime components
 
@@ -23,16 +23,16 @@ flowchart LR
 - **Renderer:** React/TypeScript; sandbox, context isolation, no Node integration, restrictive CSP, and a narrow typed preload. It cannot submit policy outcomes, direct signing requests, or secrets.
 - **Electron main:** validates IPC caller and input, coordinates domain and persistence operations, and owns WDK and wallet secret handling.
 - **QVAC:** `@qvac/sdk@0.22.0` runs from [`qvac-worker.ts`](../../src/electron/qvac-worker.ts) in Electron `utilityProcess` using a typed request protocol. Model ID is `QWEN3_600M_INST_Q4`, Qwen3 600M Q4_0. Initialization may download/cache weights; inference can then run locally. Output is advisory and never an input to policy or transaction authorization.
-- **Deterministic policy:** [`treasury-domain.ts`](../../src/electron/treasury-domain.ts) uses exact integer minor units for the synthetic KES demonstration. [`sepolia-domain.ts`](../../src/electron/sepolia-domain.ts) separately checks native ETH amounts/fees in wei for Sepolia. Neither supports currency conversion or ERC-20 stablecoins.
+- **Deterministic policy:** [`treasury-domain.ts`](../../src/electron/treasury-domain.ts) uses exact integer minor units for the synthetic KES demonstration. [`sepolia-domain.ts`](../../src/electron/sepolia-domain.ts) checks six-decimal mock USD₮ transfer amounts and ETH-denominated gas policy for Sepolia. This test-token workflow is not a business stablecoin integration.
 - **Persistence/audit:** main-process stores use versioned JSON, atomic replacement, exact schema validation and SHA-256 hash-chained events. Chaining detects local retained-history edits, but cannot prevent a machine owner from rewriting the entire file and recomputing hashes. No remote anchor, encryption-at-rest, or remote backup is provided.
-- **WDK:** `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24`, compatibility-pinned `@tetherto/wdk-wallet@1.0.0-beta.21`, and ethers 6.17.0 implement a native ETH Sepolia-only workflow. See [`sepolia-wallet.ts`](../../src/electron/sepolia-wallet.ts).
+- **WDK:** `@tetherto/wdk@1.0.0-beta.22`, `@tetherto/wdk-wallet-evm@1.0.0-beta.24`, compatibility-pinned `@tetherto/wdk-wallet@1.0.0-beta.21`, and ethers 6.17.0 implement a Sepolia test USD₮ ERC-20 workflow; native Sepolia ETH is used only for gas. See [`sepolia-wallet.ts`](../../src/electron/sepolia-wallet.ts).
 - **Cost planner:** [`treasury-cost.ts`](../../src/electron/treasury-cost.ts) compares at least two explicit user-entered quotes with fixed decimal precision. It has no network access or quote source.
 
 ## Wallet boundary and lifecycle
 
 Wallet setup checks Sepolia chain identity and Electron asynchronous `safeStorage`. On Linux the selected backend must be GNOME Keyring (`gnome_libsecret`). A dedicated restricted backup window displays a 12-word phrase once; only OS-encrypted phrase ciphertext is stored. Decrypted seed text exists transiently in main-process memory, where JavaScript strings cannot be reliably erased. No phrase/private key enters the main renderer, proposal store, logs, or ordinary IPC.
 
-The user creates a quote, may explicitly approve a policy threshold, then separately confirms a native ETH transaction in an OS dialog. Main rechecks chain, balance, exact amount, fee and policy before WDK signing and broadcast. An ambiguous broadcast becomes `unknown` and is never automatically retried. A second RPC checks chain, successful receipt, transaction hash, sender/recipient validity and native transfer shape before the record can be marked confirmed. Network is required for setup, balance, fees, signing/broadcast and receipt checks. Broadcast alone does not mean confirmed.
+The user creates a quote, may explicitly approve a policy threshold, then separately confirms a test USD₮ ERC-20 transaction in an OS dialog. Main rechecks chain, balance, exact amount, fee and policy before WDK signing and broadcast. An ambiguous broadcast becomes `unknown` and is never automatically retried. A second RPC checks chain, successful receipt, transaction hash, sender/recipient validity and native transfer shape before the record can be marked confirmed. Network is required for setup, balance, fees, signing/broadcast and receipt checks. Broadcast alone does not mean confirmed.
 
 Automated lifecycle/security tests and RPC-independent domain tests pass when run, but **a real transfer has not been completed and independently verified**.
 
